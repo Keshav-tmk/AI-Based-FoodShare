@@ -41,6 +41,7 @@ function saveAuth(userData) {
   currentUser = userData;
   updateAuthUI();
   connectSocket();
+  loadNotifications();
 }
 
 function loadAuth() {
@@ -65,6 +66,17 @@ function logout() {
     socket = null;
   }
   updateAuthUI();
+  
+  // Clear notifications
+  const dropdown = document.getElementById('notif-dropdown-list');
+  if (dropdown) dropdown.innerHTML = '<div class="notif-empty">No notifications yet</div>';
+  unreadCount = 0;
+  updateNotifBadge();
+
+  // Close any active tracking modals
+  if (typeof closeDonorTracking === 'function') closeDonorTracking();
+  if (typeof closeClaimAlert === 'function') closeClaimAlert();
+
   switchView('home');
   showToast('Logged out successfully', 'info');
 }
@@ -868,11 +880,18 @@ async function handleFoodSubmission(e) {
     return;
   }
 
-  // Check if AI flagged the food — show confirmation
-  if (lastAIResult && lastAIResult.flagged) {
-    const confirmMsg = `⚠️ AI Quality Warning\n\nThe AI has flagged this food image as "${lastAIResult.label}" (Score: ${lastAIResult.score}/100).\n\nThis listing will be submitted but flagged for manual review by moderators.\n\nDo you want to proceed?`;
-    if (!confirm(confirmMsg)) {
-      return;
+  // Check if AI flagged the food
+  if (lastAIResult) {
+    if (lastAIResult.spoilageDetected) {
+      alert(`🚫 Submission Rejected: The AI detected signs of spoilage or damage (identified as "${lastAIResult.spoilageMatch}"). For health and safety reasons, this food cannot be shared on the platform.`);
+      return; // Strictly reject
+    }
+    
+    if (lastAIResult.flagged) {
+      const confirmMsg = `⚠️ AI Quality Warning\n\nThe AI has flagged this food image as "${lastAIResult.label}" (Score: ${lastAIResult.score}/100).\n\nThis listing will be submitted but flagged for manual review by moderators.\n\nDo you want to proceed?`;
+      if (!confirm(confirmMsg)) {
+        return;
+      }
     }
   }
 
@@ -1332,7 +1351,7 @@ async function initFoodQualityChecker() {
   }
 }
 
-async function analyzeFoodImage(imgElement) {
+async function analyzeFoodImage(imgElement, titleText = '', descText = '') {
   const model = await initFoodQualityChecker();
   if (!model) {
     return {
@@ -1343,7 +1362,7 @@ async function analyzeFoodImage(imgElement) {
 
   try {
     const predictions = await model.classify(imgElement, 10);
-    return calculateEdibilityScore(predictions);
+    return calculateEdibilityScore(predictions, titleText, descText);
   } catch (err) {
     console.error('AI analysis failed:', err);
     return {
@@ -1353,7 +1372,7 @@ async function analyzeFoodImage(imgElement) {
   }
 }
 
-function calculateEdibilityScore(predictions) {
+function calculateEdibilityScore(predictions, titleText = '', descText = '') {
   if (!predictions || predictions.length === 0) {
     return { score: 50, label: 'Unknown', status: 'uncertain', classification: 'No results', confidence: 0, flagged: false, predictions: [] };
   }
@@ -1361,45 +1380,78 @@ function calculateEdibilityScore(predictions) {
   const topPrediction = predictions[0];
   const confidence = Math.round(topPrediction.probability * 100);
 
-  // Check for spoilage indicators across ALL predictions
-  let spoilageDetected = false;
-  let spoilageMatch = '';
-  for (const pred of predictions) {
-    const name = pred.className.toLowerCase();
-    for (const keyword of SPOILAGE_KEYWORDS) {
-      if (name.includes(keyword.toLowerCase())) {
-        spoilageDetected = true;
-        spoilageMatch = pred.className;
-        break;
-      }
+  // NLP Check
+  const combinedText = `${titleText} ${descText}`.toLowerCase();
+  let textIsFood = false;
+  let textCategoryScore = -1;
+
+  for (const keyword of FRESH_FOOD_KEYWORDS) {
+    if (combinedText.includes(keyword.toLowerCase())) {
+      textIsFood = true;
+      break;
     }
-    if (spoilageDetected) break;
   }
 
-  // Check if it's recognized as food
-  let isFoodItem = false;
+  for (const [cat, score] of Object.entries(FOOD_CATEGORIES)) {
+    if (combinedText.includes(cat.toLowerCase().replace(/_/g, ' '))) {
+      textCategoryScore = Math.max(textCategoryScore, score);
+    }
+  }
+
+  // Check for spoilage indicators across ALL predictions and text
+  let spoilageDetected = false;
+  let spoilageMatch = '';
+  
+  for (const keyword of SPOILAGE_KEYWORDS) {
+    if (combinedText.includes(keyword.toLowerCase())) {
+      spoilageDetected = true;
+      spoilageMatch = keyword;
+      break;
+    }
+  }
+
+  if (!spoilageDetected) {
+    for (const pred of predictions) {
+      const name = pred.className.toLowerCase();
+      for (const keyword of SPOILAGE_KEYWORDS) {
+        if (name.includes(keyword.toLowerCase())) {
+          spoilageDetected = true;
+          spoilageMatch = pred.className;
+          break;
+        }
+      }
+      if (spoilageDetected) break;
+    }
+  }
+
+  // Check if it's recognized as food via Image
+  let imgIsFoodItem = false;
   for (const pred of predictions) {
     const name = pred.className.toLowerCase();
     for (const keyword of FRESH_FOOD_KEYWORDS) {
       if (name.includes(keyword.toLowerCase())) {
-        isFoodItem = true;
+        imgIsFoodItem = true;
         break;
       }
     }
-    if (isFoodItem) break;
+    if (imgIsFoodItem) break;
   }
 
-  // Check known categories
-  let categoryScore = -1;
+  let isFoodItem = imgIsFoodItem || textIsFood;
+
+  // Check known categories via Image
+  let imgCategoryScore = -1;
   for (const pred of predictions.slice(0, 5)) {
     const name = pred.className.toLowerCase().replace(/[\s,]+/g, '_');
     for (const [cat, score] of Object.entries(FOOD_CATEGORIES)) {
       if (name.includes(cat.toLowerCase())) {
-        categoryScore = Math.max(categoryScore, score);
+        imgCategoryScore = Math.max(imgCategoryScore, score);
         break;
       }
     }
   }
+
+  let finalCategoryScore = Math.max(imgCategoryScore, textCategoryScore);
 
   // Calculate final score
   let score;
@@ -1408,11 +1460,15 @@ function calculateEdibilityScore(predictions) {
   if (spoilageDetected) {
     score = Math.max(5, Math.min(30, 30 - confidence * 0.3));
     flagged = true;
-  } else if (categoryScore >= 0) {
-    score = Math.round(categoryScore * (0.7 + confidence * 0.003));
+  } else if (finalCategoryScore >= 0) {
+    // If text and image both confirm food, boost score
+    let hybridBoost = (imgCategoryScore >= 0 && textCategoryScore >= 0) ? 10 : 0;
+    score = Math.round(finalCategoryScore * (0.6 + confidence * 0.003)) + hybridBoost;
     score = Math.max(10, Math.min(100, score));
   } else if (isFoodItem) {
-    score = Math.max(60, Math.min(90, 70 + confidence * 0.2));
+    let hybridBoost = (imgIsFoodItem && textIsFood) ? 15 : 0;
+    score = Math.max(60, Math.min(95, 70 + confidence * 0.2)) + hybridBoost;
+    score = Math.max(10, Math.min(100, score));
   } else {
     score = Math.max(15, Math.min(45, 35 - confidence * 0.2));
     flagged = true;
@@ -1422,14 +1478,16 @@ function calculateEdibilityScore(predictions) {
   let status, label;
   if (spoilageDetected) {
     status = 'suspicious'; label = 'Food Damaged / Spoiled'; flagged = true;
-  } else if (!isFoodItem && categoryScore < 0) {
+  } else if (!isFoodItem && finalCategoryScore < 0) {
     status = 'suspicious'; label = 'Not a Food Item'; flagged = true;
   } else if (score >= 80) { status = 'fresh'; label = 'Fresh & Edible'; }
   else if (score >= 60) { status = 'edible'; label = 'Likely Edible'; }
   else if (score >= 40) { status = 'uncertain'; label = 'Quality Needs Review'; flagged = true; }
   else { status = 'suspicious'; label = 'Poor Quality Detected'; flagged = true; }
 
-  return { score, label, status, classification: topPrediction.className, confidence, flagged, spoilageDetected, spoilageMatch, isFoodItem, predictions };
+  let displayClass = textIsFood && !imgIsFoodItem ? `Text: ${titleText}` : topPrediction.className;
+
+  return { score, label, status, classification: displayClass, confidence, flagged, spoilageDetected, spoilageMatch, isFoodItem, predictions };
 }
 
 function renderQualityResult(result) {
@@ -1531,11 +1589,14 @@ async function handlePhotoChange(event) {
     previewImg.src = e.target.result;
     previewImg.onload = async () => {
       try {
-        const result = await analyzeFoodImage(previewImg);
+        const titleText = document.getElementById('food-title').value;
+        const descText = document.getElementById('food-description').value;
+
+        const result = await analyzeFoodImage(previewImg, titleText, descText);
         lastAIResult = result;
         renderQualityResult(result);
         console.log('AI Predictions:', result.predictions);
-        console.log('AI Result:', result);
+        console.log('AI Hybrid Result:', result);
       } catch (err) {
         console.error('AI analysis error:', err);
         loading.style.display = 'none';

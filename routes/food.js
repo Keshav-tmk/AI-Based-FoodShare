@@ -341,9 +341,16 @@ router.put('/:id/complete', auth, async (req, res) => {
       }
     }
 
-    // Emit pickup_completed to the food room (both donor and receiver)
+    // Emit pickup_completed to donor, receiver, and food room
     if (io) {
-      io.emit('pickup_completed', { foodId: food._id });
+      const donorId = food.donor.toString();
+      let claimerId = food.claimedBy ? food.claimedBy.toString() : '';
+      
+      io.to(donorId).emit('pickup_completed', { foodId: food._id });
+      if (claimerId) {
+         io.to(claimerId).emit('pickup_completed', { foodId: food._id });
+      }
+      io.to('food_' + food._id.toString()).emit('pickup_completed', { foodId: food._id });
     }
 
     res.json({ message: 'Pickup verified and completed! 🎉' });

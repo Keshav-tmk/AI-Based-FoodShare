@@ -29,6 +29,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/food', require('./routes/food'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/ai', require('./routes/ai'));
 
 // --- SPA Catch-all: serve index1.html ---
 app.get('*', (req, res) => {

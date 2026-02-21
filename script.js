@@ -376,6 +376,14 @@ async function handleFoodSubmission(e) {
     return;
   }
 
+  // Check if AI flagged the food — show confirmation
+  if (lastAIResult && lastAIResult.flagged) {
+    const confirmMsg = `⚠️ AI Quality Warning\n\nThe AI has flagged this food image as "${lastAIResult.label}" (Score: ${lastAIResult.score}/100).\n\nThis listing will be submitted but flagged for manual review by moderators.\n\nDo you want to proceed?`;
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+  }
+
   const form = e.target;
   const formData = new FormData();
 
@@ -393,6 +401,16 @@ async function handleFoodSubmission(e) {
     formData.append('photo', photoInput.files[0]);
   }
 
+  // Include AI quality metadata
+  if (lastAIResult) {
+    formData.append('aiScore', lastAIResult.score);
+    formData.append('aiLabel', lastAIResult.label);
+    formData.append('aiStatus', lastAIResult.status);
+    formData.append('aiClassification', lastAIResult.classification);
+    formData.append('aiConfidence', lastAIResult.confidence);
+    formData.append('aiFlagged', lastAIResult.flagged);
+  }
+
   try {
     const submitBtn = form.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
@@ -405,6 +423,12 @@ async function handleFoodSubmission(e) {
 
     showToast('Food shared successfully! 🎉', 'success');
     form.reset();
+    lastAIResult = null;
+
+    // Reset AI panel
+    const aiPanel = document.getElementById('ai-quality-panel');
+    if (aiPanel) aiPanel.style.display = 'none';
+
     switchView('browse');
     loadFoodListings();
 
@@ -717,4 +741,288 @@ function animateChart() {
 function setChartPeriod(btn, period) {
   document.querySelectorAll('.chart-toggle button').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+}
+
+// =======================================
+// AI FOOD QUALITY CHECK MODULE
+// =======================================
+
+let mobilenetModel = null;
+let lastAIResult = null;
+
+// Food-related ImageNet categories and their edibility scores
+const FOOD_CATEGORIES = {
+  // High edibility (80-100) — clearly fresh food
+  'pizza': 95, 'cheeseburger': 90, 'hotdog': 88, 'french_loaf': 92, 'bagel': 90,
+  'pretzel': 88, 'burrito': 92, 'ice_cream': 85, 'ice_lolly': 82, 'espresso': 90,
+  'cup': 70, 'soup_bowl': 88, 'guacamole': 92, 'meat_loaf': 85, 'plate': 75,
+  'carbonara': 93, 'chocolate_sauce': 80, 'dough': 78, 'custard_apple': 90,
+  'strawberry': 95, 'orange': 95, 'lemon': 90, 'fig': 92, 'pineapple': 95,
+  'banana': 93, 'jackfruit': 88, 'pomegranate': 92, 'granny_smith': 95,
+  'corn': 90, 'acorn_squash': 88, 'mushroom': 85, 'broccoli': 95,
+  'cauliflower': 92, 'bell_pepper': 93, 'cucumber': 92, 'head_cabbage': 88,
+  'zucchini': 90, 'spaghetti_squash': 85, 'butternut_squash': 88,
+  'artichoke': 85, 'cardoon': 80, 'trifle': 88, 'cake': 85,
+  'potpie': 88, 'consomme': 82, 'hot_pot': 90, 'grocery_store': 70,
+
+  // Medium edibility (50-79) — could be food but uncertain
+  'bakery': 72, 'dining_table': 65, 'restaurant': 68, 'menu': 55,
+  'mixing_bowl': 60, 'spatula': 50, 'crock_pot': 65, 'frying_pan': 60,
+  'wok': 60, 'caldron': 55, 'coffeepot': 55, 'teapot': 55,
+  'wooden_spoon': 50, 'ladle': 50, 'strainer': 50,
+
+  // Low edibility (0-39) — non-food or spoiled indicators
+  'toilet_tissue': 10, 'Band_Aid': 8, 'muzzle': 5, 'pill_bottle': 10,
+  'syringe': 5, 'mouse': 5, 'cockroach': 3, 'ant': 5, 'fly': 3,
+  'tick': 3, 'slug': 5, 'snail': 10, 'earthworm': 5,
+};
+
+// Keywords that suggest spoiled/unsafe food
+const SPOILAGE_KEYWORDS = [
+  'fungus', 'mold', 'mould', 'agaric', 'mushroom', 'toadstool', 'stinkhorn',
+  'earthstar', 'slime_mold', 'hen-of-the-woods', 'bolete', 'coral_fungus',
+  'lichen', 'rust', 'decay', 'rot', 'compost', 'garbage', 'trash',
+  'cockroach', 'ant', 'fly', 'maggot', 'worm', 'insect', 'pest',
+  'toilet', 'syringe', 'Band_Aid', 'bandage'
+];
+
+// Keywords that strongly indicate fresh food
+const FRESH_FOOD_KEYWORDS = [
+  'pizza', 'burger', 'sandwich', 'salad', 'pasta', 'rice', 'bread', 'loaf',
+  'cake', 'pie', 'fruit', 'vegetable', 'soup', 'stew', 'curry',
+  'apple', 'banana', 'orange', 'strawberry', 'grape', 'mango',
+  'broccoli', 'carrot', 'potato', 'tomato', 'corn', 'pepper',
+  'ice_cream', 'custard', 'trifle', 'espresso', 'coffee',
+  'meat', 'chicken', 'fish', 'egg', 'cheese', 'milk',
+  'bagel', 'pretzel', 'burrito', 'hotdog', 'cheeseburger',
+  'french_loaf', 'potpie', 'carbonara', 'guacamole', 'consomme'
+];
+
+async function initFoodQualityChecker() {
+  if (mobilenetModel) return mobilenetModel;
+  try {
+    showToast('Loading AI model for food quality check...', 'info');
+    mobilenetModel = await mobilenet.load({ version: 2, alpha: 1.0 });
+    showToast('AI model ready!', 'success');
+    return mobilenetModel;
+  } catch (err) {
+    console.error('Failed to load MobileNet:', err);
+    showToast('AI model failed to load. Quality check unavailable.', 'error');
+    return null;
+  }
+}
+
+async function analyzeFoodImage(imgElement) {
+  const model = await initFoodQualityChecker();
+  if (!model) {
+    return {
+      score: 50, label: 'Unknown', status: 'uncertain',
+      classification: 'AI unavailable', confidence: 0, flagged: false, predictions: []
+    };
+  }
+
+  try {
+    const predictions = await model.classify(imgElement, 10);
+    return calculateEdibilityScore(predictions);
+  } catch (err) {
+    console.error('AI analysis failed:', err);
+    return {
+      score: 50, label: 'Unknown', status: 'uncertain',
+      classification: 'Analysis failed', confidence: 0, flagged: false, predictions: []
+    };
+  }
+}
+
+function calculateEdibilityScore(predictions) {
+  if (!predictions || predictions.length === 0) {
+    return { score: 50, label: 'Unknown', status: 'uncertain', classification: 'No results', confidence: 0, flagged: false, predictions: [] };
+  }
+
+  const topPrediction = predictions[0];
+  const confidence = Math.round(topPrediction.probability * 100);
+
+  // Check for spoilage indicators across ALL predictions
+  let spoilageDetected = false;
+  let spoilageMatch = '';
+  for (const pred of predictions) {
+    const name = pred.className.toLowerCase();
+    for (const keyword of SPOILAGE_KEYWORDS) {
+      if (name.includes(keyword.toLowerCase())) {
+        spoilageDetected = true;
+        spoilageMatch = pred.className;
+        break;
+      }
+    }
+    if (spoilageDetected) break;
+  }
+
+  // Check if it's recognized as food
+  let isFoodItem = false;
+  for (const pred of predictions) {
+    const name = pred.className.toLowerCase();
+    for (const keyword of FRESH_FOOD_KEYWORDS) {
+      if (name.includes(keyword.toLowerCase())) {
+        isFoodItem = true;
+        break;
+      }
+    }
+    if (isFoodItem) break;
+  }
+
+  // Check known categories
+  let categoryScore = -1;
+  for (const pred of predictions.slice(0, 5)) {
+    const name = pred.className.toLowerCase().replace(/[\s,]+/g, '_');
+    for (const [cat, score] of Object.entries(FOOD_CATEGORIES)) {
+      if (name.includes(cat.toLowerCase())) {
+        categoryScore = Math.max(categoryScore, score);
+        break;
+      }
+    }
+  }
+
+  // Calculate final score
+  let score;
+  let flagged = false;
+
+  if (spoilageDetected) {
+    score = Math.max(5, Math.min(30, 30 - confidence * 0.3));
+    flagged = true;
+  } else if (categoryScore >= 0) {
+    score = Math.round(categoryScore * (0.7 + confidence * 0.003));
+    score = Math.max(10, Math.min(100, score));
+  } else if (isFoodItem) {
+    score = Math.max(60, Math.min(90, 70 + confidence * 0.2));
+  } else {
+    score = Math.max(15, Math.min(45, 35 - confidence * 0.2));
+    flagged = true;
+  }
+
+  // Determine status
+  let status, label;
+  if (spoilageDetected) {
+    status = 'suspicious'; label = 'Food Damaged / Spoiled'; flagged = true;
+  } else if (!isFoodItem && categoryScore < 0) {
+    status = 'suspicious'; label = 'Not a Food Item'; flagged = true;
+  } else if (score >= 80) { status = 'fresh'; label = 'Fresh & Edible'; }
+  else if (score >= 60) { status = 'edible'; label = 'Likely Edible'; }
+  else if (score >= 40) { status = 'uncertain'; label = 'Quality Needs Review'; flagged = true; }
+  else { status = 'suspicious'; label = 'Poor Quality Detected'; flagged = true; }
+
+  return { score, label, status, classification: topPrediction.className, confidence, flagged, spoilageDetected, spoilageMatch, isFoodItem, predictions };
+}
+
+function renderQualityResult(result) {
+  const loading = document.getElementById('ai-loading');
+  const results = document.getElementById('ai-results');
+  const scoreOverlay = document.getElementById('ai-score-overlay');
+
+  loading.style.display = 'none';
+  results.style.display = 'block';
+  scoreOverlay.style.display = 'flex';
+
+  const ringProgress = document.getElementById('ai-ring-progress');
+  const circumference = 326.73;
+  const offset = circumference - (result.score / 100) * circumference;
+
+  const colors = { fresh: '#22C55E', edible: '#EAB308', uncertain: '#F97316', suspicious: '#EF4444' };
+  ringProgress.style.stroke = colors[result.status] || colors.uncertain;
+
+  setTimeout(() => {
+    ringProgress.style.transition = 'stroke-dashoffset 1.5s ease-out';
+    ringProgress.style.strokeDashoffset = offset;
+  }, 100);
+
+  animateNumber(document.getElementById('ai-score-number'), 0, result.score, 1200);
+
+  document.getElementById('ai-classification').textContent = result.classification;
+  document.getElementById('ai-confidence').textContent = result.confidence + '%';
+
+  const badge = document.getElementById('ai-edibility-badge');
+  badge.textContent = result.label;
+  badge.className = `ai-badge ai-badge-${result.status}`;
+
+  const warningBanner = document.getElementById('ai-warning-banner');
+  const warningTitle = document.getElementById('ai-warning-title');
+  const warningMessage = document.getElementById('ai-warning-message');
+  const reviewFlag = document.getElementById('ai-review-flag');
+
+  if (result.flagged) {
+    warningBanner.style.display = 'flex';
+    reviewFlag.style.display = 'flex';
+    if (result.spoilageDetected) {
+      warningTitle.textContent = '🚫 Food Appears Damaged or Spoiled';
+      warningMessage.textContent = `The AI detected signs of spoilage or damage (identified as "${result.spoilageMatch}"). This food may not be safe to share. The listing will be flagged for moderator review before it becomes visible.`;
+    } else if (!result.isFoodItem) {
+      warningTitle.textContent = '🚫 This is Not a Food Item';
+      warningMessage.textContent = `The AI identified this image as "${result.classification}" which is not a food item. Please upload a clear photo of the food you want to share.`;
+    } else {
+      warningTitle.textContent = '⚠️ Food Quality Needs Review';
+      warningMessage.textContent = `The AI detected the food but is not confident about its quality (Score: ${result.score}/100). This listing will be reviewed by a moderator to ensure food safety.`;
+    }
+  } else {
+    warningBanner.style.display = 'none';
+    reviewFlag.style.display = 'none';
+  }
+}
+
+function animateNumber(el, start, end, duration) {
+  const startTime = performance.now();
+  function tick(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    el.textContent = Math.round(start + (end - start) * eased);
+    if (progress < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+async function handlePhotoChange(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const panel = document.getElementById('ai-quality-panel');
+  const previewImg = document.getElementById('ai-preview-img');
+  const loading = document.getElementById('ai-loading');
+  const results = document.getElementById('ai-results');
+  const scoreOverlay = document.getElementById('ai-score-overlay');
+  const uploadLabel = document.getElementById('photo-upload-label');
+
+  panel.style.display = 'block';
+  loading.style.display = 'flex';
+  results.style.display = 'none';
+  scoreOverlay.style.display = 'none';
+
+  uploadLabel.innerHTML = `
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+    ${file.name} ✓ (click to change)`;
+
+  const ringProgress = document.getElementById('ai-ring-progress');
+  ringProgress.style.transition = 'none';
+  ringProgress.style.strokeDashoffset = '326.73';
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    previewImg.src = e.target.result;
+    previewImg.onload = async () => {
+      try {
+        const result = await analyzeFoodImage(previewImg);
+        lastAIResult = result;
+        renderQualityResult(result);
+        console.log('AI Predictions:', result.predictions);
+        console.log('AI Result:', result);
+      } catch (err) {
+        console.error('AI analysis error:', err);
+        loading.style.display = 'none';
+        lastAIResult = null;
+        showToast('AI analysis failed. You can still submit.', 'error');
+      }
+    };
+  };
+  reader.readAsDataURL(file);
 }

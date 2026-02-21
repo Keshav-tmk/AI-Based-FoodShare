@@ -121,6 +121,9 @@ function updateAuthUI() {
   const profileEmail = document.getElementById('profile-email');
   const profileAvatar = document.getElementById('profile-avatar');
   const navNotif = document.getElementById('nav-notif-btn');
+  const navUserInfo = document.getElementById('nav-user-info');
+  const navUserName = document.getElementById('nav-user-name');
+  const navUserAvatar = document.getElementById('nav-user-avatar');
 
   if (currentUser) {
     if (authBtn) authBtn.textContent = 'Share Food';
@@ -129,10 +132,14 @@ function updateAuthUI() {
     if (profileEmail) profileEmail.textContent = currentUser.email;
     if (profileAvatar) profileAvatar.textContent = currentUser.avatar;
     if (navNotif) navNotif.style.display = 'flex';
+    if (navUserInfo) navUserInfo.style.display = 'block';
+    if (navUserName) navUserName.textContent = currentUser.name;
+    if (navUserAvatar) navUserAvatar.textContent = currentUser.avatar;
   } else {
     if (authBtn) authBtn.textContent = 'Get Started';
     if (logoutBtn) logoutBtn.style.display = 'none';
     if (navNotif) navNotif.style.display = 'none';
+    if (navUserInfo) navUserInfo.style.display = 'none';
   }
 }
 

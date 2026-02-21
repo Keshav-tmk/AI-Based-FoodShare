@@ -11,6 +11,9 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <!-- TensorFlow.js + MobileNet for AI Food Quality Check -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
     <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -438,8 +441,8 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label">Photo</label>
-                        <input type="file" id="food-photo" accept="image/*" hidden>
-                        <label for="food-photo" class="form-file-label">
+                        <input type="file" id="food-photo" accept="image/*" hidden onchange="handlePhotoChange(event)">
+                        <label for="food-photo" class="form-file-label" id="photo-upload-label">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -448,6 +451,74 @@
                             </svg>
                             Upload a photo of your food
                         </label>
+                    </div>
+
+                    <!-- AI Food Quality Check Panel -->
+                    <div id="ai-quality-panel" class="ai-quality-panel" style="display:none;">
+                        <!-- Image Preview -->
+                        <div class="ai-preview-container">
+                            <img id="ai-preview-img" class="ai-preview-img" alt="Food preview" crossorigin="anonymous">
+                            <div id="ai-score-overlay" class="ai-score-overlay" style="display:none;">
+                                <div class="ai-score-ring">
+                                    <svg viewBox="0 0 120 120">
+                                        <circle class="ai-ring-bg" cx="60" cy="60" r="52" />
+                                        <circle id="ai-ring-progress" class="ai-ring-progress" cx="60" cy="60" r="52"
+                                            stroke-dasharray="326.73" stroke-dashoffset="326.73" />
+                                    </svg>
+                                    <div class="ai-score-value">
+                                        <span id="ai-score-number">0</span>
+                                        <span class="ai-score-label">/ 100</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- AI Analysis Loading -->
+                        <div id="ai-loading" class="ai-loading">
+                            <div class="ai-loading-spinner"></div>
+                            <span>AI is analyzing your food image...</span>
+                        </div>
+
+                        <!-- AI Results -->
+                        <div id="ai-results" class="ai-results" style="display:none;">
+                            <div class="ai-results-header">
+                                <div class="ai-results-icon">🤖</div>
+                                <div>
+                                    <h4>AI Quality Assessment</h4>
+                                    <p class="ai-disclaimer">Advisory only — AI is not the final decision</p>
+                                </div>
+                            </div>
+
+                            <div class="ai-metrics">
+                                <div class="ai-metric">
+                                    <span class="ai-metric-label">Classification</span>
+                                    <span id="ai-classification" class="ai-metric-value">—</span>
+                                </div>
+                                <div class="ai-metric">
+                                    <span class="ai-metric-label">Confidence</span>
+                                    <span id="ai-confidence" class="ai-metric-value">—</span>
+                                </div>
+                                <div class="ai-metric">
+                                    <span class="ai-metric-label">Edibility Score</span>
+                                    <span id="ai-edibility-badge" class="ai-badge ai-badge-fresh">—</span>
+                                </div>
+                            </div>
+
+                            <!-- Warning Banner (hidden by default) -->
+                            <div id="ai-warning-banner" class="ai-warning-banner" style="display:none;">
+                                <div class="ai-warning-icon">⚠️</div>
+                                <div class="ai-warning-content">
+                                    <strong id="ai-warning-title">Suspicious Image Detected</strong>
+                                    <p id="ai-warning-message">This food item has been flagged for manual review.</p>
+                                </div>
+                            </div>
+
+                            <!-- Review Flag -->
+                            <div id="ai-review-flag" class="ai-review-flag" style="display:none;">
+                                <span>🔍</span>
+                                <span>This item will be <strong>flagged for manual review</strong> by moderators</span>
+                            </div>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Pickup Address *</label>

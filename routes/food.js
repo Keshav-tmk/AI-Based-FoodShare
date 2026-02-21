@@ -5,6 +5,7 @@ const fs = require('fs');
 const auth = require('../middleware/auth');
 const Food = require('../models/Food');
 const Notification = require('../models/Notification');
+const { classifyFood } = require('../ml/foodAI');
 const router = express.Router();
 
 // Ensure uploads directory exists
@@ -129,6 +130,14 @@ router.post('/', auth, upload.single('photo'), async (req, res) => {
     if (req.file) {
       foodData.photo = `/uploads/${req.file.filename}`;
     }
+
+    // AI Auto-Classification
+    const aiResult = classifyFood(name, description || '');
+    foodData.aiCategory = aiResult.category;
+    foodData.aiCategoryLabel = aiResult.categoryLabel;
+    foodData.aiEmoji = aiResult.emoji;
+    foodData.aiConfidence = aiResult.confidence;
+    foodData.aiShelfLifeHours = aiResult.shelfLifeHours;
 
     const food = new Food(foodData);
     await food.save();

@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FoodShare — Share Food, Save the Planet</title>
+    <meta name="description"
+        content="FoodShare connects your community to reduce food waste through real-time local sharing. Join 4,000+ members making an impact.">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="auth-modal">
+        <div class="auth-modal-overlay" id="auth-modal-overlay"></div>
+        <div class="auth-modal-content glass">
+            <button class="auth-close" onclick="closeAuthModal()">&times;</button>
+            <div class="auth-header">
+                <div class="nav-logo" style="justify-content:center;margin-bottom:16px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 8C17 6 15 2 12 2S7 6 7 8c0 3 2 4 2 6H15c0-2 2-3 2-6z" />
+                        <path d="M9 14v2a3 3 0 0 0 6 0v-2" />
+                        <path d="M12 18v4" />
+                    </svg>
+                    <span>FoodShare</span>
+                </div>
+                <div class="auth-tabs">
+                    <button class="auth-tab active" data-tab="login">Sign In</button>
+                    <button class="auth-tab" data-tab="register">Sign Up</button>
+                </div>
+            </div>
+
+            <!-- Login Form -->
+            <div id="login-form-container">
+                <form id="login-form" class="auth-form">
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" id="login-email" placeholder="you@example.com" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" id="login-password" placeholder="••••••••" class="form-input" required>
+                    </div>
+                    <div id="login-error" class="auth-error"></div>
+                    <button type="submit" class="btn-primary" style="width:100%;justify-content:center;">Sign In
+                        →</button>
+                </form>
+            </div>
+
+            <!-- Register Form -->
+            <div id="register-form-container" style="display:none;">
+                <form id="register-form" class="auth-form">
+                    <div class="form-group">
+                        <label class="form-label">Full Name</label>
+                        <input type="text" id="register-name" placeholder="Your full name" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" id="register-email" placeholder="you@example.com" class="form-input"
+                            required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" id="register-password" placeholder="Min 6 characters" class="form-input"
+                            required minlength="6">
+                    </div>
+                    <div id="register-error" class="auth-error"></div>
+                    <button type="submit" class="btn-primary" style="width:100%;justify-content:center;">Create Account
+                        →</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="navbar" id="navbar">
+        <div class="navbar-inner">
+            <div class="nav-logo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 8C17 6 15 2 12 2S7 6 7 8c0 3 2 4 2 6H15c0-2 2-3 2-6z" />
+                    <path d="M9 14v2a3 3 0 0 0 6 0v-2" />
+                    <path d="M12 18v4" />
+                </svg>
+                <span>FoodShare</span>
+            </div>
+            <div class="nav-links" id="navLinks">
+                <a href="#" class="active" data-nav="home">Home</a>
+                <a href="#" data-nav="browse">Browse</a>
+                <a href="#impact" data-nav="impact">Impact</a>
+                <a href="#community" data-nav="community">Community</a>
+                <a href="#about" data-nav="about">About</a>
+            </div>
+            <div class="nav-right">
+                <button class="hamburger" id="hamburger" aria-label="Menu">
+                    <span></span><span></span><span></span>
+                </button>
+                <div class="nav-icon" title="Search"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg></div>
+
+                <!-- Notification Bell -->
+                <div class="nav-icon notif-wrapper" id="nav-notif-btn" title="Notifications"
+                    onclick="toggleNotifDropdown()" style="display:none;position:relative;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                    </svg>
+                    <span class="notif-badge" id="notif-badge" style="display:none;">0</span>
+
+                    <!-- Notification Dropdown -->
+                    <div class="notif-dropdown" id="notif-dropdown">
+                        <div class="notif-dropdown-header">
+                            <h4>Notifications</h4>
+                        </div>
+                        <div class="notif-dropdown-list" id="notif-dropdown-list">
+                            <div class="notif-empty">No notifications yet</div>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn-primary btn-sm" id="auth-action-btn" onclick="handleAuthAction('add')">Get
+                    Started</button>
+                <button class="btn-secondary btn-sm" id="logout-btn" onclick="logout()"
+                    style="display:none;">Logout</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Mobile Menu -->
+    <div class="mobile-menu" id="mobileMenu">
+        <a href="#" onclick="switchView('home');closeMobileMenu()">Home</a>
+        <a href="#" onclick="switchView('browse');closeMobileMenu()">Browse</a>
+        <a href="#impact">Impact</a>
+        <a href="#community">Community</a>
+        <a href="#about">About</a>
+    </div>
+
+    <main>
+        <!-- HOME VIEW -->
+        <div id="home-view" class="view active">
+            <!-- Hero -->
+            <section class="hero container">
+                <div class="hero-content animate-on-scroll">
+                    <h1>Share Food.<br><span class="highlight">Save the Planet.</span></h1>
+                    <p>Connect with your community and reduce food waste with real-time local sharing. Join thousands
+                        making a difference.</p>
+                    <div class="hero-buttons">
+                        <button class="btn-primary" onclick="switchView('browse')">Find Food Nearby <span
+                                class="arrow">→</span></button>
+                        <button class="btn-secondary" onclick="handleAuthAction('add')">Share Your Leftovers</button>
+                    </div>
+                </div>
+                <div class="hero-visual">
+                    <div class="hero-card">
+                        <img src="https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=250&fit=crop"
+                            alt="Delicious food" class="hero-card-img">
+                        <div class="hero-card-title">Fresh Homemade Pasta</div>
+                        <div class="hero-card-meta">
+                            <span class="hero-card-badge badge-green">📍 0.3 km</span>
+                            <span class="hero-card-badge badge-purple">⏰ 2h left</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══ TWO-COLUMN: DONOR & RECEIVER ═══ -->
+            <section class="section container animate-on-scroll">
+                <div class="section-header">
+                    <h2>Choose Your <span class="highlight">Role</span></h2>
+                    <p>Whether you have food to spare or need a meal — FoodShare brings the community together.</p>
+                </div>
+                <div class="role-columns">
+                    <!-- DONOR Column -->
+                    <div class="glass-card role-card role-donor">
+                        <div class="role-icon role-icon-donor">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" y1="3" x2="12" y2="15" />
+                            </svg>
+                        </div>
+                        <h3 class="role-title">I'm a <span style="color:var(--green);">Donor</span></h3>
+                        <p class="role-desc">Share surplus food with your neighbors, NGOs, and communities in need.
+                            Reduce waste, feed people.</p>
+                        <ul class="role-features">
+                            <li>
+                                <span class="role-feature-icon">📸</span>
+                                <span>Snap a photo & list food instantly</span>
+                            </li>
+                            <li>
+                                <span class="role-feature-icon">📍</span>
+                                <span>Pin your pickup location on the map</span>
+                            </li>
+                            <li>
+                                <span class="role-feature-icon">🔔</span>
+                                <span>Get notified when someone claims</span>
+                            </li>
+                            <li>
+                                <span class="role-feature-icon">📊</span>
+                                <span>Track your impact & meals saved</span>
+                            </li>
+                        </ul>
+                        <button class="btn-primary role-btn" onclick="handleAuthAction('add')"
+                            style="width:100%;justify-content:center;">
+                            Share Food Now <span class="arrow">→</span>
+                        </button>
+                    </div>
+
+                    <!-- RECEIVER Column -->
+                    <div class="glass-card role-card role-receiver">
+                        <div class="role-icon role-icon-receiver">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                        </div>
+                        <h3 class="role-title">I'm a <span style="color:var(--purple);">Receiver</span></h3>
+                        <p class="role-desc">Browse available meals nearby and claim instantly. Fresh, free food from
+                            generous community members.</p>
+                        <ul class="role-features">
+                            <li>
+                                <span class="role-feature-icon">🗺️</span>
+                                <span>Explore food on an interactive map</span>
+                            </li>
+                            <li>
+                                <span class="role-feature-icon">⚡</span>
+                                <span>One-click claim locks the item for you</span>
+                            </li>
+                            <li>
+                                <span class="role-feature-icon">💬</span>
+                                <span>Real-time notification from the donor</span>
+                            </li>
+                            <li>
+                                <span class="role-feature-icon">🤝</span>
+                                <span>Easy pickup & completion confirmation</span>
+                            </li>
+                        </ul>
+                        <button class="btn-secondary role-btn" onclick="switchView('browse')"
+                            style="width:100%;justify-content:center;border-color:var(--purple);color:var(--purple);">
+                            Find Food Nearby <span class="arrow">→</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Stats -->
+            <section class="container animate-on-scroll">
+                <div class="stats-row">
+                    <div class="glass-card stat-card">
+                        <div class="stat-number" data-count="1247">0</div>
+                        <div class="stat-label">Meals Saved</div>
+                        <div class="stat-trend">↑ +12% this week</div>
+                    </div>
+                    <div class="glass-card stat-card">
+                        <div class="stat-number" data-count="423">0</div>
+                        <div class="stat-label">Active Users</div>
+                        <div class="stat-trend">↑ +5% this week</div>
+                    </div>
+                    <div class="glass-card stat-card">
+                        <div class="stat-number" data-count="89">0</div>
+                        <div class="stat-label">Shared This Week</div>
+                        <div class="stat-trend">↑ +8% vs last week</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Fresh Food -->
+            <section class="section container animate-on-scroll">
+                <div class="section-header">
+                    <h2>Fresh Food <span class="highlight">Available</span></h2>
+                    <p>Discover freshly shared meals from your community</p>
+                </div>
+                <div class="food-grid" id="food-grid-home"></div>
+            </section>
+
+            <!-- Map Section -->
+            <section class="section container animate-on-scroll map-section" id="impact">
+                <div class="section-header">
+                    <h2>Active Shares <span class="highlight">Near You</span></h2>
+                    <p>See real-time food sharing activity in your area</p>
+                </div>
+                <div style="position:relative;">
+                    <div class="glass map-badge">🟢 Active Shares: 12</div>
+                    <div id="map"></div>
+                </div>
+            </section>
+
+            <!-- Community -->
+            <section class="section container animate-on-scroll" id="community">
+                <div class="section-header">
+                    <h2>Trusted by <span class="highlight">4,000+</span> Community Members</h2>
+                    <p>Real stories from people making a difference every day</p>
+                </div>
+                <div class="avatars-row">
+                    <div class="avatar-circle">SK</div>
+                    <div class="avatar-circle">MR</div>
+                    <div class="avatar-circle">PL</div>
+                    <div class="avatar-circle">AJ</div>
+                    <div class="avatar-circle">RN</div>
+                    <div class="avatar-circle">VK</div>
+                    <div class="avatar-circle"
+                        style="background:rgba(34,197,94,0.2);color:var(--green);font-size:0.7rem;">+3.9K</div>
+                </div>
+                <div class="testimonials">
+                    <div class="glass-card testimonial-card">
+                        <p>"FoodShare helped me connect with neighbors I never knew. I've shared over 50 meals and saved
+                            so much food from going to waste."</p>
+                        <div class="testimonial-author">Sneha Kapoor</div>
+                        <div class="testimonial-role">Community Lead, Bangalore</div>
+                    </div>
+                    <div class="glass-card testimonial-card">
+                        <p>"As a restaurant owner, I used to throw away surplus food daily. Now, everything gets shared
+                            with people who need it most."</p>
+                        <div class="testimonial-author">Marco Rossi</div>
+                        <div class="testimonial-role">Restaurant Owner, Mumbai</div>
+                    </div>
+                    <div class="glass-card testimonial-card">
+                        <p>"The platform is beautifully designed and incredibly easy to use. It genuinely makes a
+                            difference in reducing food waste."</p>
+                        <div class="testimonial-author">Priya Lakshmi</div>
+                        <div class="testimonial-role">Environmental Activist</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sustainability Chart -->
+            <section class="section container animate-on-scroll" id="about">
+                <div class="section-header">
+                    <h2>Sustainability <span class="highlight">Impact</span></h2>
+                    <p>Tracking our collective progress towards zero food waste</p>
+                </div>
+                <div class="glass chart-container">
+                    <div class="chart-toggle">
+                        <button class="active" onclick="setChartPeriod(this,'weekly')">Weekly</button>
+                        <button onclick="setChartPeriod(this,'monthly')">Monthly</button>
+                    </div>
+                    <svg class="chart-svg" viewBox="0 0 600 200" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id="greenGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stop-color="#22C55E" stop-opacity="0.4" />
+                                <stop offset="100%" stop-color="#22C55E" stop-opacity="0" />
+                            </linearGradient>
+                        </defs>
+                        <g class="chart-grid">
+                            <line x1="0" y1="50" x2="600" y2="50" />
+                            <line x1="0" y1="100" x2="600" y2="100" />
+                            <line x1="0" y1="150" x2="600" y2="150" />
+                        </g>
+                        <path class="chart-area"
+                            d="M0,180 L85,150 L170,120 L255,130 L340,90 L425,60 L510,70 L600,30 L600,200 L0,200 Z"
+                            id="chartArea" />
+                        <path class="chart-line" d="M0,180 L85,150 L170,120 L255,130 L340,90 L425,60 L510,70 L600,30"
+                            stroke-dasharray="600" stroke-dashoffset="600" id="chartLine" />
+                        <text x="42" y="195" class="chart-label" text-anchor="middle">Mon</text>
+                        <text x="170" y="195" class="chart-label" text-anchor="middle">Tue</text>
+                        <text x="255" y="195" class="chart-label" text-anchor="middle">Wed</text>
+                        <text x="340" y="195" class="chart-label" text-anchor="middle">Thu</text>
+                        <text x="425" y="195" class="chart-label" text-anchor="middle">Fri</text>
+                        <text x="510" y="195" class="chart-label" text-anchor="middle">Sat</text>
+                        <text x="580" y="195" class="chart-label" text-anchor="middle">Sun</text>
+                    </svg>
+                    <div class="chart-metrics">
+                        <div class="chart-metric">
+                            <h4>2.4 tons</h4>
+                            <p>CO₂ Prevented</p>
+                        </div>
+                        <div class="chart-metric">
+                            <h4>1,247</h4>
+                            <p>Meals Rescued</p>
+                        </div>
+                        <div class="chart-metric">
+                            <h4>89%</h4>
+                            <p>Claim Rate</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- BROWSE VIEW -->
+        <div id="browse-view" class="view">
+            <section class="section container" style="padding-top:100px;">
+                <div class="section-header" style="text-align:left;">
+                    <h2>Browse Available <span class="highlight">Food</span></h2>
+                    <p style="margin:0;">Find fresh leftovers shared by your community</p>
+                </div>
+                <div class="food-grid" id="food-grid"></div>
+            </section>
+        </div>
+
+        <!-- ADD VIEW -->
+        <div id="add-view" class="view">
+            <section class="section container form-section" style="padding-top:100px;">
+                <div class="section-header" style="text-align:left;">
+                    <h2>Share Your <span class="highlight">Leftovers</span></h2>
+                    <p style="margin:0;">Help reduce food waste by sharing with your community</p>
+                </div>
+                <form class="glass form-card donation-form">
+                    <div class="form-group">
+                        <label class="form-label">Food Title *</label>
+                        <input type="text" id="food-title" placeholder="e.g. Homemade Lasagna" class="form-input"
+                            required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Description</label>
+                        <textarea id="food-description" placeholder="Describe your leftover food, ingredients, etc."
+                            rows="3" class="form-input"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Photo</label>
+                        <input type="file" id="food-photo" accept="image/*" hidden>
+                        <label for="food-photo" class="form-file-label">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" y1="3" x2="12" y2="15" />
+                            </svg>
+                            Upload a photo of your food
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Pickup Address *</label>
+                        <input type="text" id="food-address" placeholder="Enter address or click on map"
+                            class="form-input" required>
+                    </div>
+                    <div id="map-add"
+                        style="height:250px;border-radius:var(--radius);border:1px solid var(--glass-border);margin-bottom:20px;">
+                    </div>
+                    <button type="submit" class="btn-primary" style="width:100%;justify-content:center;">Share This Food
+                        →</button>
+                </form>
+            </section>
+        </div>
+
+        <!-- PROFILE VIEW -->
+        <div id="profile-view" class="view">
+            <section class="section container" style="padding-top:100px;">
+                <div class="glass-card" style="padding:32px;">
+                    <div style="display:flex;align-items:center;gap:20px;margin-bottom:24px;">
+                        <div id="profile-avatar"
+                            style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,var(--green),var(--purple));display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;box-shadow:0 0 20px var(--green-glow);">
+                            ?</div>
+                        <div>
+                            <h2 id="profile-name" style="font-size:1.3rem;font-weight:700;">Guest</h2>
+                            <p id="profile-email" style="color:var(--text-muted);font-size:0.85rem;">
+                                Please login to see your profile</p>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:12px;">
+                        <button class="btn-primary btn-sm" onclick="switchView('add')">+ Share Food</button>
+                        <button class="btn-secondary btn-sm" onclick="logout()">Logout</button>
+                    </div>
+                </div>
+                <div class="stats-row" style="padding:32px 0;">
+                    <div class="glass-card stat-card">
+                        <div class="stat-number">0</div>
+                        <div class="stat-label">Food Shared</div>
+                    </div>
+                    <div class="glass-card stat-card">
+                        <div class="stat-number">0</div>
+                        <div class="stat-label">Food Claimed</div>
+                    </div>
+                    <div class="glass-card stat-card">
+                        <div class="stat-number">0</div>
+                        <div class="stat-label">Completed</div>
+                    </div>
+                </div>
+                <div class="glass-card" style="padding:24px;">
+                    <div style="display:flex;gap:24px;border-bottom:1px solid var(--glass-border);margin-bottom:24px;">
+                        <a href="#"
+                            style="padding-bottom:12px;border-bottom:2px solid var(--green);color:var(--green);font-size:0.85rem;font-weight:600;">My
+                            Shared Food</a>
+                    </div>
+                    <div class="food-grid" id="my-food-grid">
+                        <div class="empty-state">
+                            <div class="empty-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                                    <circle cx="12" cy="10" r="3" />
+                                </svg></div>
+                            <h3>No food shared yet</h3>
+                            <p>Start sharing your leftovers to help reduce food waste!</p>
+                            <button class="btn-primary btn-sm" onclick="switchView('add')">+ Share Your First
+                                Item</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Bottom Nav (Mobile) -->
+    <nav class="bottom-nav">
+        <div class="bottom-nav-inner">
+            <button class="bottom-nav-btn active" data-view="home">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <polyline points="9 22 9 12 15 12 15 22" />
+                </svg>
+                <span>Home</span>
+            </button>
+            <button class="bottom-nav-btn" data-view="browse">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <span>Browse</span>
+            </button>
+            <button class="bottom-nav-btn" data-view="add">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <path d="M5 12h14" />
+                    <path d="M12 5v14" />
+                </svg>
+                <span>Add</span>
+            </button>
+            <button class="bottom-nav-btn" data-view="profile">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                </svg>
+                <span>Profile</span>
+            </button>
+        </div>
+    </nav>
+    <script src="script.js"></script>
+
+</body>
+
+</html>

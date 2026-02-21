@@ -39,9 +39,36 @@ app.get('*', (req, res) => {
 io.on('connection', (socket) => {
   console.log('Socket connected:', socket.id);
 
+  // Join user's personal room
   socket.on('join', (userId) => {
     socket.join(userId);
     console.log(`User ${userId} joined their room`);
+  });
+
+  // Join food-specific room (for donor-receiver sync)
+  socket.on('join_food_room', (foodId) => {
+    socket.join(`food_${foodId}`);
+    console.log(`Socket ${socket.id} joined food room: food_${foodId}`);
+  });
+
+  // Leave food room
+  socket.on('leave_food_room', (foodId) => {
+    socket.leave(`food_${foodId}`);
+    console.log(`Socket ${socket.id} left food room: food_${foodId}`);
+  });
+
+  // Receiver shares their live location → relay to the food room (donor will see it)
+  socket.on('share_location', (data) => {
+    // data = { foodId, lat, lng, accuracy }
+    if (data.foodId) {
+      socket.to(`food_${data.foodId}`).emit('receiver_location', {
+        foodId: data.foodId,
+        lat: data.lat,
+        lng: data.lng,
+        accuracy: data.accuracy,
+        timestamp: Date.now()
+      });
+    }
   });
 
   socket.on('disconnect', () => {

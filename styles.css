@@ -1379,3 +1379,658 @@ textarea.form-input {
 .toast-notification {
   border-color: rgba(124, 92, 255, 0.3);
 }
+
+/* ===== PICKUP DASHBOARD ===== */
+.pickup-status-card {
+  padding: 28px 32px;
+  margin-bottom: 28px;
+}
+
+.pickup-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+.pickup-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.4;
+  transition: all 0.4s ease;
+  min-width: 100px;
+}
+
+.pickup-step.active {
+  opacity: 1;
+}
+
+.pickup-step-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid var(--glass-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  transition: all 0.4s ease;
+}
+
+.pickup-step.active .pickup-step-icon {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: var(--green);
+  box-shadow: 0 0 20px var(--green-glow);
+}
+
+.pickup-step-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.pickup-step-time {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.pickup-step-line {
+  width: 80px;
+  height: 3px;
+  background: var(--glass-border);
+  border-radius: 3px;
+  margin: 0 8px;
+  margin-bottom: 40px;
+  transition: all 0.4s ease;
+}
+
+.pickup-step-line.active {
+  background: linear-gradient(90deg, var(--green), rgba(34, 197, 94, 0.3));
+  box-shadow: 0 0 8px var(--green-glow);
+}
+
+.pickup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+
+.pickup-left,
+.pickup-right {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Food Card in Pickup */
+.pickup-food-card {
+  overflow: hidden;
+}
+
+.pickup-food-img {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+}
+
+.pickup-food-body {
+  padding: 20px;
+}
+
+/* Donor Card in Pickup */
+.pickup-donor-card {
+  padding: 24px;
+}
+
+.pickup-donor-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.pickup-donor-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--green), var(--purple));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+  box-shadow: 0 0 16px var(--green-glow);
+}
+
+.pickup-donor-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  color: var(--green);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* Safety Tips */
+.pickup-safety-card {
+  padding: 24px;
+}
+
+.safety-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.safety-tip:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.safety-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.safety-tip strong {
+  font-size: 0.85rem;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.safety-tip p {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* OTP Display */
+.pickup-otp-card {
+  padding: 32px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(124, 92, 255, 0.06));
+}
+
+.pickup-otp-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 16px;
+}
+
+.pickup-otp-digits {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.otp-digit {
+  width: 64px;
+  height: 80px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 2px solid rgba(34, 197, 94, 0.3);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: var(--green);
+  text-shadow: 0 0 20px var(--green-glow);
+  animation: otpGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes otpGlow {
+  0% {
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.1);
+  }
+
+  100% {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+  }
+}
+
+.pickup-otp-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.pickup-otp-icon {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  color: rgba(34, 197, 94, 0.3);
+}
+
+/* Donor OTP Input */
+.otp-verify-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.otp-input {
+  flex: 1;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 6px;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.3s;
+}
+
+.otp-input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 12px var(--green-glow);
+}
+
+.otp-input::placeholder {
+  letter-spacing: 2px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.otp-verify-btn {
+  padding: 10px 20px;
+  border-radius: 12px;
+  border: none;
+  background: var(--green);
+  color: #0B0F14;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.otp-verify-btn:hover {
+  box-shadow: 0 0 20px var(--green-glow);
+  transform: translateY(-1px);
+}
+
+/* Pickup Completed Overlay */
+.pickup-completed-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(11, 15, 20, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease;
+}
+
+.pickup-completed-content {
+  text-align: center;
+  animation: scaleIn 0.5s ease;
+}
+
+.pickup-completed-content .check-icon {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.15);
+  border: 3px solid var(--green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3rem;
+  margin: 0 auto 24px;
+  box-shadow: 0 0 40px var(--green-glow);
+}
+
+@keyframes scaleIn {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .pickup-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pickup-stepper {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .pickup-step-line {
+    width: 40px;
+  }
+
+  .otp-digit {
+    width: 52px;
+    height: 64px;
+    font-size: 1.6rem;
+  }
+}
+
+/* ===== CLAIM ALERT POPUP ===== */
+.claim-alert-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(11, 15, 20, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease;
+  backdrop-filter: blur(8px);
+}
+
+.claim-alert-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  padding: 40px 36px;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  animation: scaleIn 0.5s ease;
+}
+
+.claim-alert-pulse {
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(34, 197, 94, 0.08) 0%, transparent 60%);
+  animation: alertPulse 3s ease-in-out infinite;
+}
+
+@keyframes alertPulse {
+
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+.claim-alert-icon {
+  font-size: 3rem;
+  margin-bottom: 12px;
+  animation: shake 0.6s ease-in-out;
+}
+
+@keyframes shake {
+
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+
+  25% {
+    transform: rotate(-15deg);
+  }
+
+  50% {
+    transform: rotate(15deg);
+  }
+
+  75% {
+    transform: rotate(-10deg);
+  }
+}
+
+.claim-alert-header h2 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.claim-alert-body {
+  position: relative;
+  z-index: 1;
+}
+
+.claim-alert-food-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--green);
+  padding: 12px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  border-radius: 12px;
+  margin: 16px 0;
+}
+
+.claim-alert-receiver {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.claim-alert-receiver-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--purple), var(--green));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.claim-alert-otp-section {
+  background: rgba(34, 197, 94, 0.06);
+  border: 1px solid rgba(34, 197, 94, 0.15);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.claim-alert-otp-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.claim-alert-otp {
+  font-size: 2.4rem;
+  font-weight: 800;
+  color: var(--green);
+  letter-spacing: 12px;
+  text-shadow: 0 0 30px var(--green-glow);
+}
+
+.claim-alert-actions {
+  position: relative;
+  z-index: 1;
+}
+
+/* ===== DONOR TRACKING MODAL ===== */
+.donor-tracking-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(11, 15, 20, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease;
+}
+
+.donor-tracking-content {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  padding: 28px;
+  max-width: 600px;
+  width: 95%;
+  animation: scaleIn 0.4s ease;
+}
+
+.donor-tracking-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.donor-tracking-header h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.donor-tracking-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  gap: 12px;
+}
+
+.donor-tracking-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.tracking-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: blink 1.5s ease-in-out infinite;
+}
+
+@keyframes blink {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.donor-tracking-eta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--green);
+}
+
+/* ===== DONOR REVEAL ANIMATION ===== */
+.donor-reveal {
+  position: relative;
+}
+
+.donor-reveal-lock {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 15, 20, 0.85);
+  backdrop-filter: blur(8px);
+  border-radius: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  z-index: 2;
+  transition: all 0.8s ease;
+}
+
+.donor-reveal-lock svg {
+  color: var(--green);
+}
+
+.donor-reveal.revealed .donor-reveal-lock {
+  opacity: 0;
+  transform: scale(1.1);
+  pointer-events: none;
+}
+
+/* ===== RECEIVER LOCATION MARKER ===== */
+.receiver-marker-pulse {
+  width: 16px;
+  height: 16px;
+  background: #7C5CFF;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 12px #7C5CFF, 0 0 24px rgba(124, 92, 255, 0.5);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 12px #7C5CFF, 0 0 24px rgba(124, 92, 255, 0.5);
+  }
+
+  50% {
+    box-shadow: 0 0 20px #7C5CFF, 0 0 40px rgba(124, 92, 255, 0.7);
+  }
+}

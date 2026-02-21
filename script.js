@@ -181,6 +181,28 @@ function connectSocket() {
   socket.on('food_shared', (data) => {
     loadFoodListings();
   });
+
+  socket.on('pickup_completed', (data) => {
+    showToast('Pickup confirmed! 🎉', 'success');
+    // Show completion overlay if on pickup view
+    if (document.getElementById('pickup-view').classList.contains('active')) {
+      showPickupCompletedOverlay();
+    }
+    // Close donor tracking modal if open
+    closeDonorTracking();
+    closeClaimAlert();
+    loadFoodListings();
+  });
+
+  // Rich claim alert for donor (full-screen popup)
+  socket.on('claim_alert', (data) => {
+    showClaimAlert(data);
+  });
+
+  // Live receiver location updates (for donor tracking)
+  socket.on('receiver_location', (data) => {
+    updateReceiverLocationOnMap(data);
+  });
 }
 
 // --- NOTIFICATIONS ---
@@ -282,12 +304,23 @@ function renderCard(food) {
   const isCompleted = food.status === 'completed';
   const isOwner = currentUser && food.donor && (food.donor._id === currentUser._id || food.donor === currentUser._id);
 
+  const isClaimer = currentUser && food.claimedBy && (food.claimedBy._id === currentUser._id || food.claimedBy === currentUser._id);
+
   let actionButton = '';
   if (isCompleted) {
     actionButton = '<button class="btn-claim" disabled style="opacity:0.5;">✅ Completed</button>';
   } else if (isClaimed) {
     if (isOwner) {
-      actionButton = `<button class="btn-claim" onclick="completeFood('${food._id}')" style="background:rgba(124,92,255,0.15);color:var(--purple);">Mark Picked Up</button>`;
+      // Donor sees OTP input form
+      actionButton = `<div style="text-align:center;">
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px;">Enter receiver's OTP to confirm pickup</div>
+        <div class="otp-verify-form">
+          <input type="text" class="otp-input" id="otp-input-${food._id}" maxlength="4" placeholder="OTP" inputmode="numeric">
+          <button class="otp-verify-btn" onclick="verifyOtpComplete('${food._id}')">Verify ✓</button>
+        </div>
+      </div>`;
+    } else if (isClaimer) {
+      actionButton = `<button class="btn-claim" onclick="openPickupDashboard('${food._id}')" style="background:rgba(124,92,255,0.15);color:var(--purple);">📋 View Pickup Details</button>`;
     } else {
       actionButton = '<button class="btn-claim" disabled style="opacity:0.5;">🔒 Claimed</button>';
     }
@@ -327,6 +360,8 @@ function renderEmptyState() {
 }
 
 // --- FOOD ACTIONS ---
+let currentPickupFoodId = null;
+
 async function claimFood(foodId) {
   if (!currentUser) {
     openAuthModal('login');
@@ -334,22 +369,408 @@ async function claimFood(foodId) {
   }
 
   try {
-    await apiFetch(`/food/${foodId}/claim`, { method: 'POST' });
-    showToast('Food claimed successfully! Contact the donor for pickup.', 'success');
+    const result = await apiFetch(`/food/${foodId}/claim`, { method: 'POST' });
+    showToast('Food claimed! Opening pickup dashboard...', 'success');
+    loadFoodListings();
+
+    // Navigate to pickup dashboard with the returned data
+    currentPickupFoodId = foodId;
+    if (result.pickupData) {
+      renderPickupDashboard(result.pickupData);
+    }
+    switchView('pickup');
+
+    // Join food room for real-time sync
+    if (socket) {
+      socket.emit('join_food_room', foodId);
+    }
+
+    // Start sharing location with donor
+    startLocationSharing(foodId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function openPickupDashboard(foodId) {
+  currentPickupFoodId = foodId;
+  switchView('pickup');
+}
+
+async function verifyOtpComplete(foodId, otpValue) {
+  let otp = otpValue;
+  if (!otp) {
+    const input = document.getElementById(`otp-input-${foodId}`);
+    if (!input) return;
+    otp = input.value.trim();
+  }
+
+  if (!otp || otp.length !== 4) {
+    showToast('Please enter the 4-digit OTP from the receiver', 'error');
+    return;
+  }
+
+  try {
+    await apiFetch(`/food/${foodId}/complete`, {
+      method: 'PUT',
+      body: JSON.stringify({ otp })
+    });
+    showToast('Pickup verified and completed! 🎉', 'success');
+    closeDonorTracking();
+    closeClaimAlert();
     loadFoodListings();
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
-async function completeFood(foodId) {
+async function cancelClaim() {
+  if (!currentPickupFoodId) return;
+  if (!confirm('Are you sure you want to cancel this claim?')) return;
+
   try {
-    await apiFetch(`/food/${foodId}/complete`, { method: 'PUT' });
-    showToast('Pickup marked as completed!', 'success');
+    await apiFetch(`/food/${currentPickupFoodId}/cancel-claim`, { method: 'POST' });
+    showToast('Claim cancelled. Food is available again.', 'info');
+    currentPickupFoodId = null;
+    switchView('browse');
     loadFoodListings();
   } catch (err) {
     showToast(err.message, 'error');
   }
+}
+
+async function loadPickupDashboard(foodId) {
+  try {
+    const data = await apiFetch(`/food/${foodId}/pickup`);
+    renderPickupDashboard({
+      foodId: data.food._id,
+      name: data.food.name,
+      description: data.food.description,
+      photo: data.food.photo,
+      address: data.food.address,
+      latitude: data.food.latitude,
+      longitude: data.food.longitude,
+      pickupOtp: data.food.pickupOtp,
+      claimedAt: data.food.claimedAt,
+      expiresAt: data.food.expiresAt,
+      donor: data.donor
+    });
+  } catch (err) {
+    showToast(err.message, 'error');
+    switchView('browse');
+  }
+}
+
+function renderPickupDashboard(data) {
+  // Food details
+  const photoUrl = data.photo
+    ? (data.photo.startsWith('/uploads') ? window.location.origin + data.photo : data.photo)
+    : 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=300&fit=crop';
+
+  const foodImg = document.getElementById('pickup-food-img');
+  if (foodImg) foodImg.src = photoUrl;
+
+  const foodName = document.getElementById('pickup-food-name');
+  if (foodName) foodName.textContent = data.name || 'Food Item';
+
+  const foodDesc = document.getElementById('pickup-food-desc');
+  if (foodDesc) foodDesc.textContent = data.description || 'No description provided';
+
+  const foodAddr = document.getElementById('pickup-food-address');
+  if (foodAddr) foodAddr.textContent = `📍 ${data.address || 'Nearby'}`;
+
+  const foodExpiry = document.getElementById('pickup-food-expiry');
+  if (foodExpiry) foodExpiry.textContent = `⏰ ${timeUntilExpiry(data.expiresAt)}`;
+
+  // Donor info
+  const donor = data.donor || {};
+  const donorAvatar = document.getElementById('pickup-donor-avatar');
+  if (donorAvatar) donorAvatar.textContent = donor.avatar || '?';
+
+  const donorName = document.getElementById('pickup-donor-name');
+  if (donorName) donorName.textContent = donor.name || 'Anonymous';
+
+  const donorEmail = document.getElementById('pickup-donor-email');
+  if (donorEmail) donorEmail.textContent = donor.email || 'Contact via app';
+
+  // OTP Display
+  const otpDisplay = document.getElementById('pickup-otp-display');
+  if (otpDisplay && data.pickupOtp) {
+    const digits = data.pickupOtp.split('');
+    otpDisplay.innerHTML = digits.map(d => `<span class="otp-digit">${d}</span>`).join('');
+  }
+
+  // Claimed time
+  const claimedTime = document.getElementById('step-claimed-time');
+  if (claimedTime) claimedTime.textContent = timeAgo(data.claimedAt);
+
+  // Map address
+  const mapAddr = document.getElementById('pickup-map-address');
+  if (mapAddr) mapAddr.textContent = data.address || 'Location not specified';
+
+  // Init pickup map
+  setTimeout(() => initMapPickup(data.latitude, data.longitude, data.name), 300);
+
+  // Reveal donor details with animation
+  setTimeout(() => {
+    const cardWrapper = document.getElementById('pickup-donor-card-wrapper');
+    if (cardWrapper) cardWrapper.classList.add('revealed');
+  }, 1500);
+}
+
+let mapPickup = null;
+function initMapPickup(lat, lng, label) {
+  const container = document.getElementById('map-pickup');
+  if (!container) return;
+
+  // Destroy old map if exists
+  if (mapPickup) {
+    mapPickup.remove();
+    mapPickup = null;
+  }
+
+  const coords = [lat || 13.342, lng || 77.112];
+  mapPickup = L.map('map-pickup').setView(coords, 15);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; CARTO'
+  }).addTo(mapPickup);
+
+  // Green pulse marker
+  const pickupIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:20px;height:20px;background:#22C55E;border-radius:50%;box-shadow:0 0 16px #22C55E,0 0 32px rgba(34,197,94,0.5);border:3px solid rgba(255,255,255,0.4);animation:pulse 2s ease-in-out infinite;"></div>',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
+  });
+
+  L.marker(coords, { icon: pickupIcon })
+    .addTo(mapPickup)
+    .bindPopup(`<b>📍 Pickup: ${label || 'Food'}</b>`)
+    .openPopup();
+}
+
+function showPickupCompletedOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'pickup-completed-overlay';
+  overlay.innerHTML = `
+    <div class="pickup-completed-content">
+      <div class="check-icon">✅</div>
+      <h2 style="font-size:1.8rem;font-weight:700;margin-bottom:12px;">Pickup Complete!</h2>
+      <p style="color:var(--text-muted);margin-bottom:32px;">The donor has confirmed your pickup. Thank you for reducing food waste!</p>
+      <button class="btn-primary" onclick="this.closest('.pickup-completed-overlay').remove();switchView('browse');">Back to Browse →</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Update stepper to show completion
+  document.getElementById('step-onway')?.classList.add('active');
+  document.getElementById('step-picked')?.classList.add('active');
+  document.querySelectorAll('.pickup-step-line').forEach(l => l.classList.add('active'));
+
+  // Stop location sharing
+  stopLocationSharing();
+}
+
+// --- LOCATION SHARING (Receiver side) ---
+let locationWatchId = null;
+
+function startLocationSharing(foodId) {
+  if (!navigator.geolocation) {
+    console.log('Geolocation not supported');
+    return;
+  }
+
+  locationWatchId = navigator.geolocation.watchPosition(
+    (position) => {
+      if (socket) {
+        socket.emit('share_location', {
+          foodId: foodId,
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        });
+      }
+      // Update step-onway to active when we get first location
+      document.getElementById('step-onway')?.classList.add('active');
+      const lines = document.querySelectorAll('.pickup-step-line');
+      if (lines.length >= 2) lines[1]?.classList.add('active');
+    },
+    (error) => {
+      console.log('Geolocation error:', error.message);
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+  );
+}
+
+function stopLocationSharing() {
+  if (locationWatchId !== null) {
+    navigator.geolocation.clearWatch(locationWatchId);
+    locationWatchId = null;
+  }
+}
+
+// --- CLAIM ALERT (Donor side) ---
+let claimAlertData = null;
+
+function showClaimAlert(data) {
+  claimAlertData = data;
+  const overlay = document.getElementById('claim-alert-overlay');
+  if (!overlay) return;
+
+  // Populate the alert
+  document.getElementById('claim-alert-food-name').textContent = data.foodName || 'Food Item';
+  document.getElementById('claim-alert-subtitle').textContent = `Someone wants to pick up your "${data.foodName}"`;
+
+  const receiver = data.receiver || {};
+  document.getElementById('claim-alert-receiver-avatar').textContent = receiver.avatar || '?';
+  document.getElementById('claim-alert-receiver-name').textContent = receiver.name || 'Someone';
+  document.getElementById('claim-alert-receiver-email').textContent = receiver.email || '';
+
+  // OTP Display
+  document.getElementById('claim-alert-otp').textContent = data.pickupOtp || '----';
+
+  overlay.style.display = 'flex';
+
+  // Join food room to receive location updates
+  if (socket && data.foodId) {
+    socket.emit('join_food_room', data.foodId);
+  }
+}
+
+function closeClaimAlert() {
+  const overlay = document.getElementById('claim-alert-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+// --- DONOR TRACKING ---
+let donorTrackingMap = null;
+let receiverMarker = null;
+let donorLocationMarker = null;
+let trackingFoodId = null;
+
+function openDonorTracking() {
+  closeClaimAlert();
+
+  const modal = document.getElementById('donor-tracking-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  trackingFoodId = claimAlertData?.foodId;
+
+  // Initialize tracking map
+  setTimeout(() => initDonorTrackingMap(), 300);
+}
+
+function closeDonorTracking() {
+  const modal = document.getElementById('donor-tracking-modal');
+  if (modal) modal.style.display = 'none';
+
+  if (donorTrackingMap) {
+    donorTrackingMap.remove();
+    donorTrackingMap = null;
+  }
+  receiverMarker = null;
+  donorLocationMarker = null;
+}
+
+function initDonorTrackingMap() {
+  const container = document.getElementById('donor-tracking-map');
+  if (!container) return;
+
+  if (donorTrackingMap) {
+    donorTrackingMap.remove();
+    donorTrackingMap = null;
+  }
+
+  // Default to the food's location or a fallback
+  const foodLat = claimAlertData?.latitude || 13.342;
+  const foodLng = claimAlertData?.longitude || 77.112;
+  const coords = [foodLat, foodLng];
+
+  donorTrackingMap = L.map('donor-tracking-map').setView(coords, 14);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; CARTO'
+  }).addTo(donorTrackingMap);
+
+  // Donor (food) location marker — green
+  const donorIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:18px;height:18px;background:#22C55E;border-radius:50%;box-shadow:0 0 16px #22C55E;border:3px solid rgba(255,255,255,0.5);"></div>',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9]
+  });
+
+  donorLocationMarker = L.marker(coords, { icon: donorIcon })
+    .addTo(donorTrackingMap)
+    .bindPopup('<b>📍 Your Location (Pickup Point)</b>')
+    .openPopup();
+}
+
+function updateReceiverLocationOnMap(data) {
+  if (!donorTrackingMap) return;
+
+  const receiverCoords = [data.lat, data.lng];
+
+  // Receiver marker — purple pulsing
+  const receiverIcon = L.divIcon({
+    className: '',
+    html: '<div class="receiver-marker-pulse"></div>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8]
+  });
+
+  if (receiverMarker) {
+    receiverMarker.setLatLng(receiverCoords);
+  } else {
+    receiverMarker = L.marker(receiverCoords, { icon: receiverIcon })
+      .addTo(donorTrackingMap)
+      .bindPopup('<b>🚶 Receiver</b>');
+  }
+
+  // Fit both markers in view
+  if (donorLocationMarker) {
+    const bounds = L.latLngBounds(
+      donorLocationMarker.getLatLng(),
+      receiverMarker.getLatLng()
+    );
+    donorTrackingMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+  }
+
+  // Update status
+  const status = document.getElementById('donor-tracking-status');
+  if (status) status.innerHTML = '<span class="tracking-dot"></span> Receiver is on the way!';
+
+  // Calculate distance
+  if (donorLocationMarker) {
+    const distance = donorLocationMarker.getLatLng().distanceTo(L.latLng(data.lat, data.lng));
+    const distText = distance > 1000
+      ? `${(distance / 1000).toFixed(1)} km`
+      : `${Math.round(distance)} m`;
+
+    const etaEl = document.getElementById('donor-tracking-eta');
+    if (etaEl) {
+      etaEl.style.display = 'flex';
+      document.getElementById('donor-tracking-distance').textContent = distText;
+    }
+  }
+}
+
+function verifyFromTracking() {
+  const input = document.getElementById('donor-tracking-otp-input');
+  if (!input) return;
+  const otp = input.value.trim();
+  if (!otp || otp.length !== 4) {
+    showToast('Please enter the 4-digit OTP', 'error');
+    return;
+  }
+
+  const foodId = trackingFoodId || claimAlertData?.foodId;
+  if (!foodId) {
+    showToast('No active claim to verify', 'error');
+    return;
+  }
+
+  verifyOtpComplete(foodId, otp);
 }
 
 async function deleteFood(foodId) {
@@ -531,8 +952,8 @@ function switchView(viewName) {
     return;
   }
 
-  // Protect add and profile views
-  if ((viewName === 'add' || viewName === 'profile') && !currentUser) {
+  // Protect add, profile, and pickup views
+  if ((viewName === 'add' || viewName === 'profile' || viewName === 'pickup') && !currentUser) {
     openAuthModal('login');
     return;
   }
@@ -549,6 +970,7 @@ function switchView(viewName) {
 
   if (viewName === 'add') setTimeout(() => { initMapAdd(); }, 200);
   if (viewName === 'profile') loadProfileData();
+  if (viewName === 'pickup' && currentPickupFoodId) loadPickupDashboard(currentPickupFoodId);
 }
 
 // --- MAPS ---

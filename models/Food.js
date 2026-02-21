@@ -45,6 +45,14 @@ const foodSchema = new mongoose.Schema({
     enum: ['available', 'claimed', 'completed'],
     default: 'available'
   },
+  pickupOtp: {
+    type: String,
+    default: null
+  },
+  claimedAt: {
+    type: Date,
+    default: null
+  },
   expiresAt: {
     type: Date,
     default: () => new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now

@@ -118,6 +118,14 @@ router.post('/', auth, upload.single('photo'), async (req, res) => {
       longitude: longitude ? parseFloat(longitude) : null
     };
 
+    // Custom expiry time from user
+    if (req.body.expiresAt) {
+      const expiryDate = new Date(req.body.expiresAt);
+      if (expiryDate > new Date()) {
+        foodData.expiresAt = expiryDate;
+      }
+    }
+
     if (req.file) {
       foodData.photo = `/uploads/${req.file.filename}`;
     }
@@ -154,6 +162,11 @@ router.post('/:id/claim', auth, async (req, res) => {
       return res.status(400).json({ message: 'This food has already been claimed' });
     }
 
+    // Check if food has expired
+    if (food.expiresAt && new Date(food.expiresAt) < new Date()) {
+      return res.status(400).json({ message: 'This food listing has expired and can no longer be claimed' });
+    }
+
     if (food.donor._id.toString() === req.user._id.toString()) {
       return res.status(400).json({ message: 'You cannot claim your own food listing' });
     }
@@ -188,6 +201,8 @@ router.post('/:id/claim', auth, async (req, res) => {
         foodName: food.name,
         foodPhoto: food.photo,
         address: food.address,
+        latitude: food.latitude,
+        longitude: food.longitude,
         pickupOtp: otp,
         receiver: {
           name: req.user.name,
@@ -265,7 +280,7 @@ router.post('/:id/cancel-claim', auth, async (req, res) => {
   }
 });
 
-// PUT /api/food/:id/complete — Mark as picked up with OTP verification (donor only)
+// PUT /api/food/:id/complete — Mark as picked up with OTP verification (donor or receiver)
 router.put('/:id/complete', auth, async (req, res) => {
   try {
     const food = await Food.findById(req.params.id);
@@ -274,8 +289,12 @@ router.put('/:id/complete', auth, async (req, res) => {
       return res.status(404).json({ message: 'Food listing not found' });
     }
 
-    if (food.donor.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Only the donor can mark this as completed' });
+    // Allow both donor and receiver (claimer) to verify OTP
+    const isDonor = food.donor.toString() === req.user._id.toString();
+    const isClaimer = food.claimedBy && food.claimedBy.toString() === req.user._id.toString();
+
+    if (!isDonor && !isClaimer) {
+      return res.status(403).json({ message: 'Only the donor or receiver can complete this pickup' });
     }
 
     if (food.status !== 'claimed') {

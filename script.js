@@ -303,17 +303,35 @@ function renderCard(food) {
   const isClaimed = food.status === 'claimed';
   const isCompleted = food.status === 'completed';
   const isOwner = currentUser && food.donor && (food.donor._id === currentUser._id || food.donor === currentUser._id);
+  const isExpired = food.expiresAt && new Date(food.expiresAt) < new Date();
 
   const isClaimer = currentUser && food.claimedBy && (food.claimedBy._id === currentUser._id || food.claimedBy === currentUser._id);
 
   let actionButton = '';
   if (isCompleted) {
     actionButton = '<button class="btn-claim" disabled style="opacity:0.5;">✅ Completed</button>';
+  } else if (isExpired && !isClaimed) {
+    actionButton = '<button class="btn-claim" disabled style="opacity:0.5;background:rgba(255,80,80,0.1);color:#ff5050;">⏰ Expired</button>';
   } else if (isClaimed) {
     if (isOwner) {
-      // Donor sees OTP input form
-      actionButton = `<div style="text-align:center;">
-        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px;">Enter receiver's OTP to confirm pickup</div>
+      // Donor sees full receiver info + OTP input + Track button
+      const claimer = food.claimedBy || {};
+      const claimerName = claimer.name || 'Receiver';
+      const claimerAvatar = claimer.avatar || '?';
+      const claimerEmail = claimer.email || '';
+      actionButton = `<div class="donor-claimed-panel">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:12px;background:rgba(124,92,255,0.06);border:1px solid rgba(124,92,255,0.15);border-radius:12px;">
+          <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--purple),var(--green));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;color:#fff;flex-shrink:0;">${claimerAvatar}</div>
+          <div>
+            <div style="font-weight:700;font-size:0.9rem;">${claimerName}</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);">${claimerEmail}</div>
+          </div>
+          <span style="margin-left:auto;font-size:0.7rem;color:var(--green);font-weight:600;">CLAIMED</span>
+        </div>
+        <button class="btn-claim" onclick="openDonorTrackingForFood('${food._id}')" style="background:rgba(124,92,255,0.12);color:var(--purple);margin-bottom:10px;width:100%;">
+          📍 Track ${claimerName.split(' ')[0]} Live
+        </button>
+        <div style="font-size:0.72rem;color:var(--text-muted);text-align:center;margin-bottom:6px;">Enter receiver's OTP to confirm pickup</div>
         <div class="otp-verify-form">
           <input type="text" class="otp-input" id="otp-input-${food._id}" maxlength="4" placeholder="OTP" inputmode="numeric">
           <button class="otp-verify-btn" onclick="verifyOtpComplete('${food._id}')">Verify ✓</button>
@@ -411,17 +429,54 @@ async function verifyOtpComplete(foodId, otpValue) {
   }
 
   try {
-    await apiFetch(`/food/${foodId}/complete`, {
+    const res = await apiFetch(`/food/${foodId}/complete`, {
       method: 'PUT',
       body: JSON.stringify({ otp })
     });
-    showToast('Pickup verified and completed! 🎉', 'success');
+    // Show success overlay for donor
+    showDonorCompletionOverlay();
     closeDonorTracking();
     closeClaimAlert();
-    loadFoodListings();
+    // Delay reload so user sees success
+    setTimeout(() => loadFoodListings(), 2000);
   } catch (err) {
     showToast(err.message, 'error');
   }
+}
+
+function showDonorCompletionOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'pickup-completed-overlay';
+  overlay.innerHTML = `
+    <div class="pickup-completed-content">
+      <div class="check-icon">✅</div>
+      <h2 style="font-size:1.8rem;font-weight:700;margin-bottom:12px;">Pickup Verified!</h2>
+      <p style="color:var(--text-muted);margin-bottom:32px;">The OTP was correct. Pickup is complete!<br>Thank you for sharing food! 🌟</p>
+      <button class="btn-primary" onclick="this.closest('.pickup-completed-overlay').remove();loadFoodListings();">Done ✓</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+// Open donor tracking modal from a specific food card
+function openDonorTrackingForFood(foodId) {
+  trackingFoodId = foodId;
+
+  // Join food room to receive location updates
+  if (socket) {
+    socket.emit('join_food_room', foodId);
+  }
+
+  // Set claimAlertData from current food listings if not set
+  if (!claimAlertData || claimAlertData.foodId !== foodId) {
+    claimAlertData = { foodId: foodId };
+  }
+
+  const modal = document.getElementById('donor-tracking-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  setTimeout(() => initDonorTrackingMap(), 300);
 }
 
 async function cancelClaim() {
@@ -804,6 +859,12 @@ async function handleFoodSubmission(e) {
   formData.append('description', form.querySelector('#food-description').value);
   formData.append('address', document.getElementById('food-address').value);
 
+  // Custom expiry time
+  const expiryInput = document.getElementById('food-expiry');
+  if (expiryInput && expiryInput.value) {
+    formData.append('expiresAt', new Date(expiryInput.value).toISOString());
+  }
+
   if (addMarkerLatLng) {
     formData.append('latitude', addMarkerLatLng.lat);
     formData.append('longitude', addMarkerLatLng.lng);
@@ -837,6 +898,27 @@ async function handleFoodSubmission(e) {
     submitBtn.disabled = false;
     submitBtn.innerHTML = 'Share This Food →';
   }
+}
+
+// --- EXPIRY HELPERS ---
+function setExpiryHours(hours) {
+  const input = document.getElementById('food-expiry');
+  if (!input) return;
+  const d = new Date(Date.now() + hours * 60 * 60 * 1000);
+  // Format to yyyy-MM-ddTHH:mm for datetime-local
+  const pad = (n) => String(n).padStart(2, '0');
+  input.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function initExpiryInput() {
+  const input = document.getElementById('food-expiry');
+  if (!input) return;
+  // Set min to current time
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  input.min = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  // Default to 6 hours
+  setExpiryHours(6);
 }
 
 // --- PROFILE ---
@@ -968,7 +1050,7 @@ function switchView(viewName) {
   window.scrollTo(0, 0);
   closeMobileMenu();
 
-  if (viewName === 'add') setTimeout(() => { initMapAdd(); }, 200);
+  if (viewName === 'add') setTimeout(() => { initMapAdd(); initExpiryInput(); }, 200);
   if (viewName === 'profile') loadProfileData();
   if (viewName === 'pickup' && currentPickupFoodId) loadPickupDashboard(currentPickupFoodId);
 }

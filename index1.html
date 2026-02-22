@@ -108,11 +108,18 @@
                 <button class="hamburger" id="hamburger" aria-label="Menu">
                     <span></span><span></span><span></span>
                 </button>
-                <div class="nav-icon" title="Search"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-                        fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="11" cy="11" r="8" />
-                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    </svg></div>
+                <!-- Search -->
+                <div class="nav-search" id="nav-search-container">
+                    <div class="nav-icon" id="nav-search-btn" title="Search" onclick="toggleNavSearch()">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                    </div>
+                    <input type="text" id="nav-search-input" class="nav-search-input" placeholder="Search food..."
+                        oninput="handleFoodSearch(event)">
+                </div>
 
                 <!-- Notification Bell -->
                 <div class="nav-icon notif-wrapper" id="nav-notif-btn" title="Notifications"
@@ -504,8 +511,20 @@
                                 </div>
                             </div>
 
+                            <!-- AI Detailed Breakdown -->
+                            <div class="ai-detailed-breakdown"
+                                style="margin-top: 20px; border-top: 1px solid var(--glass-border); padding-top: 16px;">
+                                <h5
+                                    style="margin: 0 0 12px 0; font-size: 0.85rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase;">
+                                    Top Model Predictions</h5>
+                                <div id="ai-predictions-list" style="display: flex; flex-direction: column; gap: 10px;">
+                                    <!-- Populated via JS -->
+                                </div>
+                            </div>
+
                             <!-- Warning Banner (hidden by default) -->
-                            <div id="ai-warning-banner" class="ai-warning-banner" style="display:none;">
+                            <div id="ai-warning-banner" class="ai-warning-banner"
+                                style="display:none; margin-top: 16px;">
                                 <div class="ai-warning-icon">⚠️</div>
                                 <div class="ai-warning-content">
                                     <strong id="ai-warning-title">Suspicious Image Detected</strong>

@@ -66,7 +66,7 @@ function logout() {
     socket = null;
   }
   updateAuthUI();
-  
+
   // Clear notifications
   const dropdown = document.getElementById('notif-dropdown-list');
   if (dropdown) dropdown.innerHTML = '<div class="notif-empty">No notifications yet</div>';
@@ -886,7 +886,7 @@ async function handleFoodSubmission(e) {
       alert(`🚫 Submission Rejected: The AI detected signs of spoilage or damage (identified as "${lastAIResult.spoilageMatch}"). For health and safety reasons, this food cannot be shared on the platform.`);
       return; // Strictly reject
     }
-    
+
     if (lastAIResult.flagged) {
       const confirmMsg = `⚠️ AI Quality Warning\n\nThe AI has flagged this food image as "${lastAIResult.label}" (Score: ${lastAIResult.score}/100).\n\nThis listing will be submitted but flagged for manual review by moderators.\n\nDo you want to proceed?`;
       if (!confirm(confirmMsg)) {
@@ -1401,7 +1401,7 @@ function calculateEdibilityScore(predictions, titleText = '', descText = '') {
   // Check for spoilage indicators across ALL predictions and text
   let spoilageDetected = false;
   let spoilageMatch = '';
-  
+
   for (const keyword of SPOILAGE_KEYWORDS) {
     if (combinedText.includes(keyword.toLowerCase())) {
       spoilageDetected = true;
@@ -1542,6 +1542,31 @@ function renderQualityResult(result) {
     warningBanner.style.display = 'none';
     reviewFlag.style.display = 'none';
   }
+
+  // Render Detailed Predictions Breakdown
+  const predictionsList = document.getElementById('ai-predictions-list');
+  if (predictionsList && result.predictions && result.predictions.length > 0) {
+    predictionsList.innerHTML = result.predictions.slice(0, 3).map((pred, i) => {
+      const conf = Math.round(pred.probability * 100);
+      const color = i === 0 ? 'var(--green)' : 'rgba(255,255,255,0.4)';
+      const textColor = i === 0 ? 'var(--text)' : 'var(--text-muted)';
+      const capitalize = str => str.charAt(0).toUpperCase() + str.slice(1);
+
+      return `
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:${textColor}; font-weight:500;">
+            <span style="text-transform:capitalize;">${capitalize(pred.className.split(',')[0])}</span>
+            <span>${conf}%</span>
+          </div>
+          <div style="height:6px; background:rgba(255,255,255,0.05); border-radius:3px; overflow:hidden;">
+            <div style="height:100%; width:${conf}%; background:${color}; border-radius:3px;"></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } else if (predictionsList) {
+    predictionsList.innerHTML = '<div style="font-size:0.8rem; color:var(--text-muted);">No detailed predictions available.</div>';
+  }
 }
 
 function animateNumber(el, start, end, duration) {
@@ -1644,4 +1669,58 @@ function calculateFreshness(food) {
   else { label = 'Expired'; color = '#EF4444'; }
 
   return { score, label, color };
+}
+
+// ===========================================
+// SEARCH FUNCTIONALITY
+// ===========================================
+function toggleNavSearch() {
+  const input = document.getElementById('nav-search-input');
+  if (!input) return;
+
+  input.classList.toggle('active');
+
+  if (input.classList.contains('active')) {
+    input.focus();
+    // Switch to browse view to see search results if not already there
+    if (!document.getElementById('browse-view').classList.contains('active')) {
+      switchView('browse');
+    }
+  } else {
+    input.value = '';
+    handleFoodSearch({ target: input });
+  }
+}
+
+function handleFoodSearch(event) {
+  const query = event.target.value.toLowerCase().trim();
+  const cards = document.querySelectorAll('#food-grid .food-card');
+  const grid = document.getElementById('food-grid');
+
+  if (!grid || !cards.length) return;
+
+  let hasVisible = false;
+  cards.forEach(card => {
+    const title = card.querySelector('h3')?.textContent.toLowerCase() || '';
+    const desc = card.querySelector('.food-card-desc')?.textContent.toLowerCase() || '';
+    const tags = card.querySelector('.food-card-meta')?.textContent.toLowerCase() || '';
+
+    if (title.includes(query) || desc.includes(query) || tags.includes(query)) {
+      card.style.display = ''; // Restore original CSS display
+      hasVisible = true;
+    } else {
+      card.style.display = 'none';
+    }
+  });
+
+  const existingEmpty = grid.querySelector('.search-empty');
+  if (!hasVisible && query) {
+    if (!existingEmpty) {
+      grid.insertAdjacentHTML('beforeend', `<div class="search-empty glass-card" style="grid-column:1/-1;text-align:center;padding:40px;margin-top:20px;">No exact food found matching "${query}"</div>`);
+    } else {
+      existingEmpty.textContent = `No exact food found matching "${query}"`;
+    }
+  } else if (existingEmpty) {
+    existingEmpty.remove();
+  }
 }

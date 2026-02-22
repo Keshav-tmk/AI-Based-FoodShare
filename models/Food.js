@@ -45,6 +45,35 @@ const foodSchema = new mongoose.Schema({
     enum: ['available', 'claimed', 'completed'],
     default: 'available'
   },
+  pickupOtp: {
+    type: String,
+    default: null
+  },
+  claimedAt: {
+    type: Date,
+    default: null
+  },
+  // AI Classification fields
+  aiCategory: {
+    type: String,
+    default: null
+  },
+  aiCategoryLabel: {
+    type: String,
+    default: null
+  },
+  aiEmoji: {
+    type: String,
+    default: null
+  },
+  aiConfidence: {
+    type: Number,
+    default: 0
+  },
+  aiShelfLifeHours: {
+    type: Number,
+    default: null
+  },
   expiresAt: {
     type: Date,
     default: () => new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now

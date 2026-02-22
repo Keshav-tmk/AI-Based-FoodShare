@@ -41,6 +41,7 @@ function saveAuth(userData) {
   currentUser = userData;
   updateAuthUI();
   connectSocket();
+  loadNotifications();
 }
 
 function loadAuth() {
@@ -65,6 +66,17 @@ function logout() {
     socket = null;
   }
   updateAuthUI();
+  
+  // Clear notifications
+  const dropdown = document.getElementById('notif-dropdown-list');
+  if (dropdown) dropdown.innerHTML = '<div class="notif-empty">No notifications yet</div>';
+  unreadCount = 0;
+  updateNotifBadge();
+
+  // Close any active tracking modals
+  if (typeof closeDonorTracking === 'function') closeDonorTracking();
+  if (typeof closeClaimAlert === 'function') closeClaimAlert();
+
   switchView('home');
   showToast('Logged out successfully', 'info');
 }
@@ -181,6 +193,28 @@ function connectSocket() {
   socket.on('food_shared', (data) => {
     loadFoodListings();
   });
+
+  socket.on('pickup_completed', (data) => {
+    showToast('Pickup confirmed! 🎉', 'success');
+    // Show completion overlay if on pickup view
+    if (document.getElementById('pickup-view').classList.contains('active')) {
+      showPickupCompletedOverlay();
+    }
+    // Close donor tracking modal if open
+    closeDonorTracking();
+    closeClaimAlert();
+    loadFoodListings();
+  });
+
+  // Rich claim alert for donor (full-screen popup)
+  socket.on('claim_alert', (data) => {
+    showClaimAlert(data);
+  });
+
+  // Live receiver location updates (for donor tracking)
+  socket.on('receiver_location', (data) => {
+    updateReceiverLocationOnMap(data);
+  });
 }
 
 // --- NOTIFICATIONS ---
@@ -281,13 +315,42 @@ function renderCard(food) {
   const isClaimed = food.status === 'claimed';
   const isCompleted = food.status === 'completed';
   const isOwner = currentUser && food.donor && (food.donor._id === currentUser._id || food.donor === currentUser._id);
+  const isExpired = food.expiresAt && new Date(food.expiresAt) < new Date();
+
+  const isClaimer = currentUser && food.claimedBy && (food.claimedBy._id === currentUser._id || food.claimedBy === currentUser._id);
 
   let actionButton = '';
   if (isCompleted) {
     actionButton = '<button class="btn-claim" disabled style="opacity:0.5;">✅ Completed</button>';
+  } else if (isExpired && !isClaimed) {
+    actionButton = '<button class="btn-claim" disabled style="opacity:0.5;background:rgba(255,80,80,0.1);color:#ff5050;">⏰ Expired</button>';
   } else if (isClaimed) {
     if (isOwner) {
-      actionButton = `<button class="btn-claim" onclick="completeFood('${food._id}')" style="background:rgba(124,92,255,0.15);color:var(--purple);">Mark Picked Up</button>`;
+      // Donor sees full receiver info + OTP input + Track button
+      const claimer = food.claimedBy || {};
+      const claimerName = claimer.name || 'Receiver';
+      const claimerAvatar = claimer.avatar || '?';
+      const claimerEmail = claimer.email || '';
+      actionButton = `<div class="donor-claimed-panel">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:12px;background:rgba(124,92,255,0.06);border:1px solid rgba(124,92,255,0.15);border-radius:12px;">
+          <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--purple),var(--green));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;color:#fff;flex-shrink:0;">${claimerAvatar}</div>
+          <div>
+            <div style="font-weight:700;font-size:0.9rem;">${claimerName}</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);">${claimerEmail}</div>
+          </div>
+          <span style="margin-left:auto;font-size:0.7rem;color:var(--green);font-weight:600;">CLAIMED</span>
+        </div>
+        <button class="btn-claim" onclick="openDonorTrackingForFood('${food._id}')" style="background:rgba(124,92,255,0.12);color:var(--purple);margin-bottom:10px;width:100%;">
+          📍 Track ${claimerName.split(' ')[0]} Live
+        </button>
+        <div style="font-size:0.72rem;color:var(--text-muted);text-align:center;margin-bottom:6px;">Enter receiver's OTP to confirm pickup</div>
+        <div class="otp-verify-form">
+          <input type="text" class="otp-input" id="otp-input-${food._id}" maxlength="4" placeholder="OTP" inputmode="numeric">
+          <button class="otp-verify-btn" onclick="verifyOtpComplete('${food._id}')">Verify ✓</button>
+        </div>
+      </div>`;
+    } else if (isClaimer) {
+      actionButton = `<button class="btn-claim" onclick="openPickupDashboard('${food._id}')" style="background:rgba(124,92,255,0.15);color:var(--purple);">📋 View Pickup Details</button>`;
     } else {
       actionButton = '<button class="btn-claim" disabled style="opacity:0.5;">🔒 Claimed</button>';
     }
@@ -298,6 +361,12 @@ function renderCard(food) {
       actionButton = `<button class="btn-claim" onclick="claimFood('${food._id}')">Claim Food</button>`;
     }
   }
+
+  // AI freshness calculation (client-side mirror of backend model)
+  const aiFreshness = calculateFreshness(food);
+  const aiCatBadge = food.aiEmoji && food.aiCategoryLabel
+    ? `<span class="hero-card-badge" style="background:rgba(124,92,255,0.1);color:var(--purple);border-color:rgba(124,92,255,0.2);">${food.aiEmoji} ${food.aiCategoryLabel}</span>`
+    : '';
 
   return `<div class="glass-card food-card">
     <img src="${photoUrl}" alt="${food.name}" class="food-card-img" onerror="this.src='https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=300&fit=crop'">
@@ -310,7 +379,17 @@ function renderCard(food) {
       <div class="food-card-info">
         <span class="hero-card-badge badge-green">📍 ${food.address ? food.address.substring(0, 25) + (food.address.length > 25 ? '...' : '') : 'Nearby'}</span>
         <span class="hero-card-badge badge-purple">⏰ ${timeUntilExpiry(food.expiresAt)}</span>
+        ${aiCatBadge}
       </div>
+      ${aiFreshness.score > 0 ? `<div class="ai-freshness-bar" title="AI Freshness: ${aiFreshness.label}">
+        <div class="ai-freshness-label">
+          <span>🧠 AI Freshness</span>
+          <span style="color:${aiFreshness.color};font-weight:700;">${aiFreshness.score}% — ${aiFreshness.label}</span>
+        </div>
+        <div class="ai-freshness-track">
+          <div class="ai-freshness-fill" style="width:${aiFreshness.score}%;background:${aiFreshness.color};"></div>
+        </div>
+      </div>` : ''}
       <p style="color:var(--text-muted);font-size:0.8rem;margin-bottom:16px;">${food.description || ''}</p>
       ${actionButton}
     </div>
@@ -327,6 +406,8 @@ function renderEmptyState() {
 }
 
 // --- FOOD ACTIONS ---
+let currentPickupFoodId = null;
+
 async function claimFood(foodId) {
   if (!currentUser) {
     openAuthModal('login');
@@ -334,22 +415,445 @@ async function claimFood(foodId) {
   }
 
   try {
-    await apiFetch(`/food/${foodId}/claim`, { method: 'POST' });
-    showToast('Food claimed successfully! Contact the donor for pickup.', 'success');
+    const result = await apiFetch(`/food/${foodId}/claim`, { method: 'POST' });
+    showToast('Food claimed! Opening pickup dashboard...', 'success');
+    loadFoodListings();
+
+    // Navigate to pickup dashboard with the returned data
+    currentPickupFoodId = foodId;
+    if (result.pickupData) {
+      renderPickupDashboard(result.pickupData);
+    }
+    switchView('pickup');
+
+    // Join food room for real-time sync
+    if (socket) {
+      socket.emit('join_food_room', foodId);
+    }
+
+    // Start sharing location with donor
+    startLocationSharing(foodId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function openPickupDashboard(foodId) {
+  currentPickupFoodId = foodId;
+  switchView('pickup');
+}
+
+async function verifyOtpComplete(foodId, otpValue) {
+  let otp = otpValue;
+  if (!otp) {
+    const input = document.getElementById(`otp-input-${foodId}`);
+    if (!input) return;
+    otp = input.value.trim();
+  }
+
+  if (!otp || otp.length !== 4) {
+    showToast('Please enter the 4-digit OTP from the receiver', 'error');
+    return;
+  }
+
+  try {
+    const res = await apiFetch(`/food/${foodId}/complete`, {
+      method: 'PUT',
+      body: JSON.stringify({ otp })
+    });
+    // Show success overlay for donor
+    showDonorCompletionOverlay();
+    closeDonorTracking();
+    closeClaimAlert();
+    // Delay reload so user sees success
+    setTimeout(() => loadFoodListings(), 2000);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function showDonorCompletionOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'pickup-completed-overlay';
+  overlay.innerHTML = `
+    <div class="pickup-completed-content">
+      <div class="check-icon">✅</div>
+      <h2 style="font-size:1.8rem;font-weight:700;margin-bottom:12px;">Pickup Verified!</h2>
+      <p style="color:var(--text-muted);margin-bottom:32px;">The OTP was correct. Pickup is complete!<br>Thank you for sharing food! 🌟</p>
+      <button class="btn-primary" onclick="this.closest('.pickup-completed-overlay').remove();loadFoodListings();">Done ✓</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+// Open donor tracking modal from a specific food card
+function openDonorTrackingForFood(foodId) {
+  trackingFoodId = foodId;
+
+  // Join food room to receive location updates
+  if (socket) {
+    socket.emit('join_food_room', foodId);
+  }
+
+  // Set claimAlertData from current food listings if not set
+  if (!claimAlertData || claimAlertData.foodId !== foodId) {
+    claimAlertData = { foodId: foodId };
+  }
+
+  const modal = document.getElementById('donor-tracking-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  setTimeout(() => initDonorTrackingMap(), 300);
+}
+
+async function cancelClaim() {
+  if (!currentPickupFoodId) return;
+  if (!confirm('Are you sure you want to cancel this claim?')) return;
+
+  try {
+    await apiFetch(`/food/${currentPickupFoodId}/cancel-claim`, { method: 'POST' });
+    showToast('Claim cancelled. Food is available again.', 'info');
+    currentPickupFoodId = null;
+    switchView('browse');
     loadFoodListings();
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
-async function completeFood(foodId) {
+async function loadPickupDashboard(foodId) {
   try {
-    await apiFetch(`/food/${foodId}/complete`, { method: 'PUT' });
-    showToast('Pickup marked as completed!', 'success');
-    loadFoodListings();
+    const data = await apiFetch(`/food/${foodId}/pickup`);
+    renderPickupDashboard({
+      foodId: data.food._id,
+      name: data.food.name,
+      description: data.food.description,
+      photo: data.food.photo,
+      address: data.food.address,
+      latitude: data.food.latitude,
+      longitude: data.food.longitude,
+      pickupOtp: data.food.pickupOtp,
+      claimedAt: data.food.claimedAt,
+      expiresAt: data.food.expiresAt,
+      donor: data.donor
+    });
   } catch (err) {
     showToast(err.message, 'error');
+    switchView('browse');
   }
+}
+
+function renderPickupDashboard(data) {
+  // Food details
+  const photoUrl = data.photo
+    ? (data.photo.startsWith('/uploads') ? window.location.origin + data.photo : data.photo)
+    : 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=300&fit=crop';
+
+  const foodImg = document.getElementById('pickup-food-img');
+  if (foodImg) foodImg.src = photoUrl;
+
+  const foodName = document.getElementById('pickup-food-name');
+  if (foodName) foodName.textContent = data.name || 'Food Item';
+
+  const foodDesc = document.getElementById('pickup-food-desc');
+  if (foodDesc) foodDesc.textContent = data.description || 'No description provided';
+
+  const foodAddr = document.getElementById('pickup-food-address');
+  if (foodAddr) foodAddr.textContent = `📍 ${data.address || 'Nearby'}`;
+
+  const foodExpiry = document.getElementById('pickup-food-expiry');
+  if (foodExpiry) foodExpiry.textContent = `⏰ ${timeUntilExpiry(data.expiresAt)}`;
+
+  // Donor info
+  const donor = data.donor || {};
+  const donorAvatar = document.getElementById('pickup-donor-avatar');
+  if (donorAvatar) donorAvatar.textContent = donor.avatar || '?';
+
+  const donorName = document.getElementById('pickup-donor-name');
+  if (donorName) donorName.textContent = donor.name || 'Anonymous';
+
+  const donorEmail = document.getElementById('pickup-donor-email');
+  if (donorEmail) donorEmail.textContent = donor.email || 'Contact via app';
+
+  // OTP Display
+  const otpDisplay = document.getElementById('pickup-otp-display');
+  if (otpDisplay && data.pickupOtp) {
+    const digits = data.pickupOtp.split('');
+    otpDisplay.innerHTML = digits.map(d => `<span class="otp-digit">${d}</span>`).join('');
+  }
+
+  // Claimed time
+  const claimedTime = document.getElementById('step-claimed-time');
+  if (claimedTime) claimedTime.textContent = timeAgo(data.claimedAt);
+
+  // Map address
+  const mapAddr = document.getElementById('pickup-map-address');
+  if (mapAddr) mapAddr.textContent = data.address || 'Location not specified';
+
+  // Init pickup map
+  setTimeout(() => initMapPickup(data.latitude, data.longitude, data.name), 300);
+
+  // Reveal donor details with animation
+  setTimeout(() => {
+    const cardWrapper = document.getElementById('pickup-donor-card-wrapper');
+    if (cardWrapper) cardWrapper.classList.add('revealed');
+  }, 1500);
+}
+
+let mapPickup = null;
+function initMapPickup(lat, lng, label) {
+  const container = document.getElementById('map-pickup');
+  if (!container) return;
+
+  // Destroy old map if exists
+  if (mapPickup) {
+    mapPickup.remove();
+    mapPickup = null;
+  }
+
+  const coords = [lat || 13.342, lng || 77.112];
+  mapPickup = L.map('map-pickup').setView(coords, 15);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; CARTO'
+  }).addTo(mapPickup);
+
+  // Green pulse marker
+  const pickupIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:20px;height:20px;background:#22C55E;border-radius:50%;box-shadow:0 0 16px #22C55E,0 0 32px rgba(34,197,94,0.5);border:3px solid rgba(255,255,255,0.4);animation:pulse 2s ease-in-out infinite;"></div>',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
+  });
+
+  L.marker(coords, { icon: pickupIcon })
+    .addTo(mapPickup)
+    .bindPopup(`<b>📍 Pickup: ${label || 'Food'}</b>`)
+    .openPopup();
+}
+
+function showPickupCompletedOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'pickup-completed-overlay';
+  overlay.innerHTML = `
+    <div class="pickup-completed-content">
+      <div class="check-icon">✅</div>
+      <h2 style="font-size:1.8rem;font-weight:700;margin-bottom:12px;">Pickup Complete!</h2>
+      <p style="color:var(--text-muted);margin-bottom:32px;">The donor has confirmed your pickup. Thank you for reducing food waste!</p>
+      <button class="btn-primary" onclick="this.closest('.pickup-completed-overlay').remove();switchView('browse');">Back to Browse →</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Update stepper to show completion
+  document.getElementById('step-onway')?.classList.add('active');
+  document.getElementById('step-picked')?.classList.add('active');
+  document.querySelectorAll('.pickup-step-line').forEach(l => l.classList.add('active'));
+
+  // Stop location sharing
+  stopLocationSharing();
+}
+
+// --- LOCATION SHARING (Receiver side) ---
+let locationWatchId = null;
+
+function startLocationSharing(foodId) {
+  if (!navigator.geolocation) {
+    console.log('Geolocation not supported');
+    return;
+  }
+
+  locationWatchId = navigator.geolocation.watchPosition(
+    (position) => {
+      if (socket) {
+        socket.emit('share_location', {
+          foodId: foodId,
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        });
+      }
+      // Update step-onway to active when we get first location
+      document.getElementById('step-onway')?.classList.add('active');
+      const lines = document.querySelectorAll('.pickup-step-line');
+      if (lines.length >= 2) lines[1]?.classList.add('active');
+    },
+    (error) => {
+      console.log('Geolocation error:', error.message);
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+  );
+}
+
+function stopLocationSharing() {
+  if (locationWatchId !== null) {
+    navigator.geolocation.clearWatch(locationWatchId);
+    locationWatchId = null;
+  }
+}
+
+// --- CLAIM ALERT (Donor side) ---
+let claimAlertData = null;
+
+function showClaimAlert(data) {
+  claimAlertData = data;
+  const overlay = document.getElementById('claim-alert-overlay');
+  if (!overlay) return;
+
+  // Populate the alert
+  document.getElementById('claim-alert-food-name').textContent = data.foodName || 'Food Item';
+  document.getElementById('claim-alert-subtitle').textContent = `Someone wants to pick up your "${data.foodName}"`;
+
+  const receiver = data.receiver || {};
+  document.getElementById('claim-alert-receiver-avatar').textContent = receiver.avatar || '?';
+  document.getElementById('claim-alert-receiver-name').textContent = receiver.name || 'Someone';
+  document.getElementById('claim-alert-receiver-email').textContent = receiver.email || '';
+
+  // OTP Display
+  document.getElementById('claim-alert-otp').textContent = data.pickupOtp || '----';
+
+  overlay.style.display = 'flex';
+
+  // Join food room to receive location updates
+  if (socket && data.foodId) {
+    socket.emit('join_food_room', data.foodId);
+  }
+}
+
+function closeClaimAlert() {
+  const overlay = document.getElementById('claim-alert-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+// --- DONOR TRACKING ---
+let donorTrackingMap = null;
+let receiverMarker = null;
+let donorLocationMarker = null;
+let trackingFoodId = null;
+
+function openDonorTracking() {
+  closeClaimAlert();
+
+  const modal = document.getElementById('donor-tracking-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  trackingFoodId = claimAlertData?.foodId;
+
+  // Initialize tracking map
+  setTimeout(() => initDonorTrackingMap(), 300);
+}
+
+function closeDonorTracking() {
+  const modal = document.getElementById('donor-tracking-modal');
+  if (modal) modal.style.display = 'none';
+
+  if (donorTrackingMap) {
+    donorTrackingMap.remove();
+    donorTrackingMap = null;
+  }
+  receiverMarker = null;
+  donorLocationMarker = null;
+}
+
+function initDonorTrackingMap() {
+  const container = document.getElementById('donor-tracking-map');
+  if (!container) return;
+
+  if (donorTrackingMap) {
+    donorTrackingMap.remove();
+    donorTrackingMap = null;
+  }
+
+  // Default to the food's location or a fallback
+  const foodLat = claimAlertData?.latitude || 13.342;
+  const foodLng = claimAlertData?.longitude || 77.112;
+  const coords = [foodLat, foodLng];
+
+  donorTrackingMap = L.map('donor-tracking-map').setView(coords, 14);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; CARTO'
+  }).addTo(donorTrackingMap);
+
+  // Donor (food) location marker — green
+  const donorIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:18px;height:18px;background:#22C55E;border-radius:50%;box-shadow:0 0 16px #22C55E;border:3px solid rgba(255,255,255,0.5);"></div>',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9]
+  });
+
+  donorLocationMarker = L.marker(coords, { icon: donorIcon })
+    .addTo(donorTrackingMap)
+    .bindPopup('<b>📍 Your Location (Pickup Point)</b>')
+    .openPopup();
+}
+
+function updateReceiverLocationOnMap(data) {
+  if (!donorTrackingMap) return;
+
+  const receiverCoords = [data.lat, data.lng];
+
+  // Receiver marker — purple pulsing
+  const receiverIcon = L.divIcon({
+    className: '',
+    html: '<div class="receiver-marker-pulse"></div>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8]
+  });
+
+  if (receiverMarker) {
+    receiverMarker.setLatLng(receiverCoords);
+  } else {
+    receiverMarker = L.marker(receiverCoords, { icon: receiverIcon })
+      .addTo(donorTrackingMap)
+      .bindPopup('<b>🚶 Receiver</b>');
+  }
+
+  // Fit both markers in view
+  if (donorLocationMarker) {
+    const bounds = L.latLngBounds(
+      donorLocationMarker.getLatLng(),
+      receiverMarker.getLatLng()
+    );
+    donorTrackingMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+  }
+
+  // Update status
+  const status = document.getElementById('donor-tracking-status');
+  if (status) status.innerHTML = '<span class="tracking-dot"></span> Receiver is on the way!';
+
+  // Calculate distance
+  if (donorLocationMarker) {
+    const distance = donorLocationMarker.getLatLng().distanceTo(L.latLng(data.lat, data.lng));
+    const distText = distance > 1000
+      ? `${(distance / 1000).toFixed(1)} km`
+      : `${Math.round(distance)} m`;
+
+    const etaEl = document.getElementById('donor-tracking-eta');
+    if (etaEl) {
+      etaEl.style.display = 'flex';
+      document.getElementById('donor-tracking-distance').textContent = distText;
+    }
+  }
+}
+
+function verifyFromTracking() {
+  const input = document.getElementById('donor-tracking-otp-input');
+  if (!input) return;
+  const otp = input.value.trim();
+  if (!otp || otp.length !== 4) {
+    showToast('Please enter the 4-digit OTP', 'error');
+    return;
+  }
+
+  const foodId = trackingFoodId || claimAlertData?.foodId;
+  if (!foodId) {
+    showToast('No active claim to verify', 'error');
+    return;
+  }
+
+  verifyOtpComplete(foodId, otp);
 }
 
 async function deleteFood(foodId) {
@@ -376,11 +880,18 @@ async function handleFoodSubmission(e) {
     return;
   }
 
-  // Check if AI flagged the food — show confirmation
-  if (lastAIResult && lastAIResult.flagged) {
-    const confirmMsg = `⚠️ AI Quality Warning\n\nThe AI has flagged this food image as "${lastAIResult.label}" (Score: ${lastAIResult.score}/100).\n\nThis listing will be submitted but flagged for manual review by moderators.\n\nDo you want to proceed?`;
-    if (!confirm(confirmMsg)) {
-      return;
+  // Check if AI flagged the food
+  if (lastAIResult) {
+    if (lastAIResult.spoilageDetected) {
+      alert(`🚫 Submission Rejected: The AI detected signs of spoilage or damage (identified as "${lastAIResult.spoilageMatch}"). For health and safety reasons, this food cannot be shared on the platform.`);
+      return; // Strictly reject
+    }
+    
+    if (lastAIResult.flagged) {
+      const confirmMsg = `⚠️ AI Quality Warning\n\nThe AI has flagged this food image as "${lastAIResult.label}" (Score: ${lastAIResult.score}/100).\n\nThis listing will be submitted but flagged for manual review by moderators.\n\nDo you want to proceed?`;
+      if (!confirm(confirmMsg)) {
+        return;
+      }
     }
   }
 
@@ -390,6 +901,12 @@ async function handleFoodSubmission(e) {
   formData.append('name', form.querySelector('#food-title').value);
   formData.append('description', form.querySelector('#food-description').value);
   formData.append('address', document.getElementById('food-address').value);
+
+  // Custom expiry time
+  const expiryInput = document.getElementById('food-expiry');
+  if (expiryInput && expiryInput.value) {
+    formData.append('expiresAt', new Date(expiryInput.value).toISOString());
+  }
 
   if (addMarkerLatLng) {
     formData.append('latitude', addMarkerLatLng.lat);
@@ -440,6 +957,27 @@ async function handleFoodSubmission(e) {
     submitBtn.disabled = false;
     submitBtn.innerHTML = 'Share This Food →';
   }
+}
+
+// --- EXPIRY HELPERS ---
+function setExpiryHours(hours) {
+  const input = document.getElementById('food-expiry');
+  if (!input) return;
+  const d = new Date(Date.now() + hours * 60 * 60 * 1000);
+  // Format to yyyy-MM-ddTHH:mm for datetime-local
+  const pad = (n) => String(n).padStart(2, '0');
+  input.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function initExpiryInput() {
+  const input = document.getElementById('food-expiry');
+  if (!input) return;
+  // Set min to current time
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  input.min = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  // Default to 6 hours
+  setExpiryHours(6);
 }
 
 // --- PROFILE ---
@@ -555,8 +1093,8 @@ function switchView(viewName) {
     return;
   }
 
-  // Protect add and profile views
-  if ((viewName === 'add' || viewName === 'profile') && !currentUser) {
+  // Protect add, profile, and pickup views
+  if ((viewName === 'add' || viewName === 'profile' || viewName === 'pickup') && !currentUser) {
     openAuthModal('login');
     return;
   }
@@ -571,8 +1109,9 @@ function switchView(viewName) {
   window.scrollTo(0, 0);
   closeMobileMenu();
 
-  if (viewName === 'add') setTimeout(() => { initMapAdd(); }, 200);
+  if (viewName === 'add') setTimeout(() => { initMapAdd(); initExpiryInput(); }, 200);
   if (viewName === 'profile') loadProfileData();
+  if (viewName === 'pickup' && currentPickupFoodId) loadPickupDashboard(currentPickupFoodId);
 }
 
 // --- MAPS ---
@@ -812,7 +1351,7 @@ async function initFoodQualityChecker() {
   }
 }
 
-async function analyzeFoodImage(imgElement) {
+async function analyzeFoodImage(imgElement, titleText = '', descText = '') {
   const model = await initFoodQualityChecker();
   if (!model) {
     return {
@@ -823,7 +1362,7 @@ async function analyzeFoodImage(imgElement) {
 
   try {
     const predictions = await model.classify(imgElement, 10);
-    return calculateEdibilityScore(predictions);
+    return calculateEdibilityScore(predictions, titleText, descText);
   } catch (err) {
     console.error('AI analysis failed:', err);
     return {
@@ -833,7 +1372,7 @@ async function analyzeFoodImage(imgElement) {
   }
 }
 
-function calculateEdibilityScore(predictions) {
+function calculateEdibilityScore(predictions, titleText = '', descText = '') {
   if (!predictions || predictions.length === 0) {
     return { score: 50, label: 'Unknown', status: 'uncertain', classification: 'No results', confidence: 0, flagged: false, predictions: [] };
   }
@@ -841,45 +1380,78 @@ function calculateEdibilityScore(predictions) {
   const topPrediction = predictions[0];
   const confidence = Math.round(topPrediction.probability * 100);
 
-  // Check for spoilage indicators across ALL predictions
-  let spoilageDetected = false;
-  let spoilageMatch = '';
-  for (const pred of predictions) {
-    const name = pred.className.toLowerCase();
-    for (const keyword of SPOILAGE_KEYWORDS) {
-      if (name.includes(keyword.toLowerCase())) {
-        spoilageDetected = true;
-        spoilageMatch = pred.className;
-        break;
-      }
+  // NLP Check
+  const combinedText = `${titleText} ${descText}`.toLowerCase();
+  let textIsFood = false;
+  let textCategoryScore = -1;
+
+  for (const keyword of FRESH_FOOD_KEYWORDS) {
+    if (combinedText.includes(keyword.toLowerCase())) {
+      textIsFood = true;
+      break;
     }
-    if (spoilageDetected) break;
   }
 
-  // Check if it's recognized as food
-  let isFoodItem = false;
+  for (const [cat, score] of Object.entries(FOOD_CATEGORIES)) {
+    if (combinedText.includes(cat.toLowerCase().replace(/_/g, ' '))) {
+      textCategoryScore = Math.max(textCategoryScore, score);
+    }
+  }
+
+  // Check for spoilage indicators across ALL predictions and text
+  let spoilageDetected = false;
+  let spoilageMatch = '';
+  
+  for (const keyword of SPOILAGE_KEYWORDS) {
+    if (combinedText.includes(keyword.toLowerCase())) {
+      spoilageDetected = true;
+      spoilageMatch = keyword;
+      break;
+    }
+  }
+
+  if (!spoilageDetected) {
+    for (const pred of predictions) {
+      const name = pred.className.toLowerCase();
+      for (const keyword of SPOILAGE_KEYWORDS) {
+        if (name.includes(keyword.toLowerCase())) {
+          spoilageDetected = true;
+          spoilageMatch = pred.className;
+          break;
+        }
+      }
+      if (spoilageDetected) break;
+    }
+  }
+
+  // Check if it's recognized as food via Image
+  let imgIsFoodItem = false;
   for (const pred of predictions) {
     const name = pred.className.toLowerCase();
     for (const keyword of FRESH_FOOD_KEYWORDS) {
       if (name.includes(keyword.toLowerCase())) {
-        isFoodItem = true;
+        imgIsFoodItem = true;
         break;
       }
     }
-    if (isFoodItem) break;
+    if (imgIsFoodItem) break;
   }
 
-  // Check known categories
-  let categoryScore = -1;
+  let isFoodItem = imgIsFoodItem || textIsFood;
+
+  // Check known categories via Image
+  let imgCategoryScore = -1;
   for (const pred of predictions.slice(0, 5)) {
     const name = pred.className.toLowerCase().replace(/[\s,]+/g, '_');
     for (const [cat, score] of Object.entries(FOOD_CATEGORIES)) {
       if (name.includes(cat.toLowerCase())) {
-        categoryScore = Math.max(categoryScore, score);
+        imgCategoryScore = Math.max(imgCategoryScore, score);
         break;
       }
     }
   }
+
+  let finalCategoryScore = Math.max(imgCategoryScore, textCategoryScore);
 
   // Calculate final score
   let score;
@@ -888,11 +1460,15 @@ function calculateEdibilityScore(predictions) {
   if (spoilageDetected) {
     score = Math.max(5, Math.min(30, 30 - confidence * 0.3));
     flagged = true;
-  } else if (categoryScore >= 0) {
-    score = Math.round(categoryScore * (0.7 + confidence * 0.003));
+  } else if (finalCategoryScore >= 0) {
+    // If text and image both confirm food, boost score
+    let hybridBoost = (imgCategoryScore >= 0 && textCategoryScore >= 0) ? 10 : 0;
+    score = Math.round(finalCategoryScore * (0.6 + confidence * 0.003)) + hybridBoost;
     score = Math.max(10, Math.min(100, score));
   } else if (isFoodItem) {
-    score = Math.max(60, Math.min(90, 70 + confidence * 0.2));
+    let hybridBoost = (imgIsFoodItem && textIsFood) ? 15 : 0;
+    score = Math.max(60, Math.min(95, 70 + confidence * 0.2)) + hybridBoost;
+    score = Math.max(10, Math.min(100, score));
   } else {
     score = Math.max(15, Math.min(45, 35 - confidence * 0.2));
     flagged = true;
@@ -902,14 +1478,16 @@ function calculateEdibilityScore(predictions) {
   let status, label;
   if (spoilageDetected) {
     status = 'suspicious'; label = 'Food Damaged / Spoiled'; flagged = true;
-  } else if (!isFoodItem && categoryScore < 0) {
+  } else if (!isFoodItem && finalCategoryScore < 0) {
     status = 'suspicious'; label = 'Not a Food Item'; flagged = true;
   } else if (score >= 80) { status = 'fresh'; label = 'Fresh & Edible'; }
   else if (score >= 60) { status = 'edible'; label = 'Likely Edible'; }
   else if (score >= 40) { status = 'uncertain'; label = 'Quality Needs Review'; flagged = true; }
   else { status = 'suspicious'; label = 'Poor Quality Detected'; flagged = true; }
 
-  return { score, label, status, classification: topPrediction.className, confidence, flagged, spoilageDetected, spoilageMatch, isFoodItem, predictions };
+  let displayClass = textIsFood && !imgIsFoodItem ? `Text: ${titleText}` : topPrediction.className;
+
+  return { score, label, status, classification: displayClass, confidence, flagged, spoilageDetected, spoilageMatch, isFoodItem, predictions };
 }
 
 function renderQualityResult(result) {
@@ -1011,11 +1589,14 @@ async function handlePhotoChange(event) {
     previewImg.src = e.target.result;
     previewImg.onload = async () => {
       try {
-        const result = await analyzeFoodImage(previewImg);
+        const titleText = document.getElementById('food-title').value;
+        const descText = document.getElementById('food-description').value;
+
+        const result = await analyzeFoodImage(previewImg, titleText, descText);
         lastAIResult = result;
         renderQualityResult(result);
         console.log('AI Predictions:', result.predictions);
-        console.log('AI Result:', result);
+        console.log('AI Hybrid Result:', result);
       } catch (err) {
         console.error('AI analysis error:', err);
         loading.style.display = 'none';
@@ -1025,4 +1606,42 @@ async function handlePhotoChange(event) {
     };
   };
   reader.readAsDataURL(file);
+}
+
+// ============================================
+// AI FRESHNESS CALCULATOR (Client-side)
+// ============================================
+const AI_DECAY_RATES = {
+  cooked_meal: 0.15, bakery: 0.04, fruits_vegetables: 0.02,
+  dairy: 0.08, snacks: 0.10, beverages: 0.20, packaged: 0.005
+};
+
+function calculateFreshness(food) {
+  if (!food.createdAt || !food.expiresAt) {
+    return { score: 0, label: '', color: '#666' };
+  }
+
+  const now = new Date();
+  const created = new Date(food.createdAt);
+  const expires = new Date(food.expiresAt);
+  const hoursElapsed = (now - created) / (1000 * 60 * 60);
+  const hoursRemaining = Math.max(0, (expires - now) / (1000 * 60 * 60));
+  const totalHours = (expires - created) / (1000 * 60 * 60);
+
+  const decayRate = AI_DECAY_RATES[food.aiCategory] || 0.10;
+
+  // Exponential decay: score = 100 * e^(-λt)
+  let score = Math.round(100 * Math.exp(-decayRate * hoursElapsed));
+  const expiryFactor = hoursRemaining / Math.max(totalHours, 1);
+  score = Math.round(score * 0.7 + expiryFactor * 100 * 0.3);
+  score = Math.max(0, Math.min(100, score));
+
+  let label, color;
+  if (score >= 80) { label = 'Very Fresh'; color = '#22C55E'; }
+  else if (score >= 60) { label = 'Fresh'; color = '#84CC16'; }
+  else if (score >= 40) { label = 'Moderate'; color = '#F59E0B'; }
+  else if (score >= 20) { label = 'Low'; color = '#F97316'; }
+  else { label = 'Expired'; color = '#EF4444'; }
+
+  return { score, label, color };
 }
